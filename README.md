@@ -154,13 +154,28 @@ pipx uninstall ai-pr-reviewer
 
 ## GitHub Actions (авто-ревью на каждый PR)
 
-Мастер `pr-reviewer setup` предложит настроить всё сам (если `gh` авторизован):
-поставит секрет с ключом и переменные провайдера/профиля. Workflow уже лежит в
-[`.github/workflows/ai-review.yml`](.github/workflows/ai-review.yml) — ревью
-запускается на `opened` / `synchronize` / `reopened`.
+Ревьюить можно **любой** репозиторий (например, свой Android-проект) — код
+ревьюера туда копировать не нужно, workflow ставит его из git сам.
 
-Вручную: секрет `LLM_API_KEY` и (опционально) variables `REVIEW_PROFILE`,
-`LLM_PROVIDER`, `LLM_MODEL`.
+Мастер `pr-reviewer setup` (если `gh` авторизован) делает всё за тебя: спросит
+целевой репозиторий, положит секрет `LLM_API_KEY`, переменные
+`LLM_PROVIDER`/`LLM_MODEL`/`LLM_BASE_URL`/`REVIEW_PROFILE` и **закоммитит
+workflow `ai-review.yml`** в дефолтную ветку этого репозитория. После этого
+ревью запускается на каждый PR (`opened` / `synchronize` / `reopened`).
+
+Добавить/обновить workflow отдельно (или в другой репозиторий):
+
+```bash
+pr-reviewer install-workflow --repo owner/name   # закоммитит workflow через gh
+pr-reviewer install-workflow --print             # просто показать YAML
+```
+
+> ⚠️ Workflow должен лежать в **дефолтной ветке** целевого репозитория — GitHub
+> берёт определение workflow для PR именно оттуда. Провайдер `local` в Actions
+> не работает (нет доступа к твоему `localhost`) — используй облачный.
+
+Вручную нужны: секрет `LLM_API_KEY` и (опционально) variables `REVIEW_PROFILE`,
+`LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`.
 
 ## Webhook-сервис
 

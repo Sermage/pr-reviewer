@@ -191,3 +191,63 @@ def test_uninstall_installed_removes_home(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.paths, "home_dir", lambda: home)
     assert cli.cmd_uninstall(argparse.Namespace(yes=True)) == 0
     assert not home.exists()
+
+
+# ── install-workflow ───────────────────────────────────────────────────
+def _cp(returncode=0, stdout=""):
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def test_external_workflow_installs_from_git_and_runs_cli():
+    wf = cli.EXTERNAL_WORKFLOW
+    assert 'pip install "git+https://github.com/Sermage/pr-reviewer"' in wf
+    assert "pr-reviewer review" in wf
+    assert "on:\n  pull_request:" in wf
+    assert "${{ secrets.GITHUB_TOKEN }}" in wf  # f-string braces rendered correctly
+
+
+def test_install_workflow_creates_when_absent(monkeypatch):
+    calls = []
+
+    def fake_gh(*args, stdin=None):
+        calls.append(args)
+        if ".default_branch" in args:
+            return _cp(stdout="main\n")
+        if "GET" in args:                      # existing file lookup → not found
+            return _cp(returncode=1)
+        return _cp(stdout="{}")                # PUT
+
+    monkeypatch.setattr(cli, "_gh", fake_gh)
+    assert cli._install_workflow("o/r").returncode == 0
+    put = next(c for c in calls if "PUT" in c)
+    assert "branch=main" in put
+    assert any(a.startswith("content=") for a in put)
+    assert not any(a.startswith("sha=") for a in put)   # create path: no sha
+
+
+def test_install_workflow_updates_existing(monkeypatch):
+    calls = []
+
+    def fake_gh(*args, stdin=None):
+        calls.append(args)
+        if ".default_branch" in args:
+            return _cp(stdout="master\n")
+        if "GET" in args:                      # existing file → return its sha
+            return _cp(stdout="blobsha123\n")
+        return _cp(stdout="{}")                # PUT
+
+    monkeypatch.setattr(cli, "_gh", fake_gh)
+    assert cli._install_workflow("o/r").returncode == 0
+    put = next(c for c in calls if "PUT" in c)
+    assert "sha=blobsha123" in put             # update path passes blob sha
+
+
+def test_install_workflow_aborts_without_repo(monkeypatch):
+    monkeypatch.setattr(cli, "_gh", lambda *a, **k: _cp(returncode=1))
+    assert cli._install_workflow("o/r").returncode == 1  # default-branch lookup failed
+
+
+def test_cmd_install_workflow_print_outputs_yaml(monkeypatch, capsys):
+    assert cli.cmd_install_workflow(argparse.Namespace(repo="", print=True)) == 0
+    assert "pr-reviewer review" in capsys.readouterr().out

@@ -26,7 +26,7 @@ Review с вердиктом + inline-комментарии в PR
 ```
 app/
   main.py          # FastAPI: /webhook, /health; фон через BackgroundTasks
-  cli.py           # CLI pr-reviewer: setup/doctor/review/profile/provider/serve/update/uninstall/help
+  cli.py           # CLI: setup/doctor/review/profile/provider/serve/install-workflow/update/uninstall/help
   runner.py        # общий конвейер: get_diff → review_diff → post_review
   reviewer.py      # ядро: diff → LLM → verdict + inline-комменты + markdown
   orchestrator.py  # мета-профиль auto: детект направлений → агенты → слияние
@@ -201,17 +201,36 @@ Override: `$PR_REVIEWER_HOME` (вся база) и `$PROFILES_DIR` (только
 review_profile, post_reviews, review_actions). `POST_REVIEWS=false` гоняет весь
 конвейер без записи в GitHub (dry-run в лог).
 
-## GitHub Actions (`.github/workflows/ai-review.yml`)
+## GitHub Actions
+
+Два сценария, разные workflow:
+
+- **Свой репозиторий** (pr-reviewer ревьюит сам себя): `.github/workflows/
+  ai-review.yml` в этом репо. Код уже на месте, поэтому шаг — просто
+  `python scripts/review_pr.py` (резолвит repo/PR из аргументов/env/события,
+  вызывает общий `runner.review_pr`).
+- **Чужой репозиторий** (например, Android-проект): у него нет кода ревьюера,
+  поэтому нужен **самодостаточный** workflow (`EXTERNAL_WORKFLOW` в `cli.py`) —
+  шаг ставит пакет `pip install git+…` и вызывает консольную команду
+  `pr-reviewer review --repo … --pr …`. Секрет/переменные читаются из env.
+
+Общее:
 
 - Триггер: `pull_request` (`opened`/`synchronize`/`reopened`),
   `permissions: pull-requests: write`.
-- Ключ — секрет `LLM_API_KEY` (fallback на старый `DEEPSEEK_API_KEY`).
-- Провайдер и профиль — repo variables `LLM_PROVIDER`/`LLM_MODEL`/`LLM_BASE_URL`/
+- Ключ — секрет `LLM_API_KEY` (fallback на старый `DEEPSEEK_API_KEY`); провайдер
+  и профиль — repo variables `LLM_PROVIDER`/`LLM_MODEL`/`LLM_BASE_URL`/
   `REVIEW_PROFILE`.
-- `scripts/review_pr.py` резолвит repo/PR из аргументов/env/события и вызывает
-  общий `runner.review_pr`. Токен Actions **не может аппрувить** PR, поэтому под
-  `GITHUB_ACTIONS=true` `APPROVE` даунгрейдится в `COMMENT`.
+- Токен Actions **не может аппрувить** PR, поэтому `APPROVE` даунгрейдится в
+  `COMMENT` (`allow_approve=False`).
 - `local` в Actions не работает — runner не достучится до `localhost`.
+
+**Установка внешнего workflow** (`cli._install_workflow`, команда
+`install-workflow`, а также шаг мастера `setup`): через GitHub contents API
+(`gh api PUT …/contents/.github/workflows/ai-review.yml`) файл коммитится в
+**дефолтную ветку** целевого репо — GitHub берёт определение workflow для PR
+именно оттуда. Если файл уже есть, передаётся его blob `sha` (update-in-place).
+Локальный checkout не нужен.
 
 ## Аутентификация: сейчас и дальше
 
