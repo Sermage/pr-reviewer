@@ -1,0 +1,16 @@
+diff --git a/app/src/main/java/com/example/MainActivity.kt b/app/src/main/java/com/example/MainActivity.kt
+index 1111111..2222222 100644
+--- a/app/src/main/java/com/example/MainActivity.kt
++++ b/app/src/main/java/com/example/MainActivity.kt
+@@ -10,6 +10,14 @@ class MainActivity : AppCompatActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         setContentView(R.layout.activity_main)
++
++        // fetch user data
++        GlobalScope.launch {
++            val user = api.getUser()
++            textView.text = user.name
++        }
+     }
+ }
