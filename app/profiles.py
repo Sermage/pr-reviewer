@@ -8,15 +8,15 @@ automatically — no code change needed. Select at runtime with ``REVIEW_PROFILE
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Where user-defined profiles live. In the repo root so they're committed and
-# available to GitHub Actions too. Override with $PROFILES_DIR.
-PROFILES_DIR = Path(
-    os.getenv("PROFILES_DIR", str(Path(__file__).resolve().parent.parent / "profiles.d"))
-)
+from .paths import profiles_dir as _profiles_dir
+
+# Where user-defined profiles live: the repo's ``profiles.d/`` in a checkout
+# (committed → available to GitHub Actions), or ``~/.pr-reviewer/profiles.d``
+# when installed as a tool. Override with $PROFILES_DIR (handled in app.paths).
+PROFILES_DIR = _profiles_dir()
 
 # The strict-JSON contract every profile must ask the model to follow.
 # Kept separate so profiles only describe *what to review*, not *the format*.

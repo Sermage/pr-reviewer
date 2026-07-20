@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import paths
 from .profiles import (
     AUTO_PROFILE,
     DEFAULT_PROFILE,
@@ -37,10 +38,16 @@ from .providers import (
     resolve as resolve_llm,
 )
 
-ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = ROOT / ".env"
-ENV_EXAMPLE = ROOT / ".env.example"
-WORKFLOW = ROOT / ".github" / "workflows" / "ai-review.yml"
+PKG_ROOT = paths.package_root()      # dir containing app/ — used as serve's cwd
+ENV_PATH = paths.env_path()          # repo/.env in a checkout, else ~/.pr-reviewer/.env
+ENV_EXAMPLE = paths.env_example_path()
+WORKFLOW = paths.workflow_path()
+
+
+def _write_env(text: str) -> None:
+    """Write .env, creating its directory (needed for the ~/.pr-reviewer case)."""
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ENV_PATH.write_text(text)
 
 
 # ── tiny terminal helpers ─────────────────────────────────────────────
@@ -241,7 +248,7 @@ def cmd_setup(_: argparse.Namespace) -> int:
     }
     if new_key:
         updates["LLM_API_KEY"] = new_key
-    ENV_PATH.write_text(upsert_env(env_text, updates))
+    _write_env(upsert_env(env_text, updates))
     saved = ", ключ сохранён" if new_key else ""
     print(f"   {ok('✓')} записал .env (провайдер={provider}, профиль={profile}{saved})")
 
@@ -289,6 +296,8 @@ def cmd_setup(_: argparse.Namespace) -> int:
 # ── doctor ────────────────────────────────────────────────────────────
 def cmd_doctor(_: argparse.Namespace) -> int:
     print(bold("\n🩺 AI PR Reviewer — проверка\n"))
+    mode = "репозиторий" if paths.is_source_checkout() else "установлен (pipx)"
+    print(f"   📁 конфиг: {ENV_PATH.parent}  ({mode})\n")
     env_text = ENV_PATH.read_text() if ENV_PATH.exists() else ""
 
     def check(label: str, good: bool, hint: str = "") -> None:
@@ -555,7 +564,7 @@ def cmd_profile(args: argparse.Namespace) -> int:
 
     # Local switch (.env).
     base = ENV_PATH.read_text() if ENV_PATH.exists() else _base_env()
-    ENV_PATH.write_text(upsert_env(base, {"REVIEW_PROFILE": name}))
+    _write_env(upsert_env(base, {"REVIEW_PROFILE": name}))
     print(f"{ok('✓')} профиль → {bold(name)} (.env)")
     if name == AUTO_PROFILE:
         print("   оркестратор сам определит направление(я) PR по diff и запустит "
@@ -610,7 +619,7 @@ def cmd_provider(args: argparse.Namespace) -> int:
         "LLM_MODEL": args.model or p.default_model,
     }
     base = ENV_PATH.read_text() if ENV_PATH.exists() else _base_env()
-    ENV_PATH.write_text(upsert_env(base, updates))
+    _write_env(upsert_env(base, updates))
     print(f"{ok('✓')} провайдер → {bold(name)} "
           f"({updates['LLM_MODEL']} @ {updates['LLM_BASE_URL']})")
     if p.needs_key:
@@ -630,7 +639,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.reload:
         cmd.append("--reload")
     print(bold(f"\n🚀 Запуск на http://localhost:{args.port}  (Ctrl+C для остановки)\n"))
-    return subprocess.call(cmd, cwd=ROOT)
+    return subprocess.call(cmd, cwd=PKG_ROOT)
 
 
 # ── entrypoint ────────────────────────────────────────────────────────

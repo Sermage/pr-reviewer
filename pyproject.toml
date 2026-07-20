@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "android-pr-reviewer"
+name = "ai-pr-reviewer"
 version = "0.1.0"
-description = "AI code review for Android (Kotlin/Compose) pull requests via GitHub webhooks."
+description = "AI code review for GitHub pull requests (Android by default, any focus via profiles)."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
