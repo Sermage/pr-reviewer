@@ -4,6 +4,8 @@ Commands:
     pr-reviewer setup     interactive wizard: API key (hidden), profile, GitHub Actions
     pr-reviewer doctor     check that everything is configured
     pr-reviewer serve      run the webhook service locally
+    pr-reviewer update     pull the latest version and reinstall (or pipx upgrade)
+    pr-reviewer uninstall  remove the symlink and config (points to .venv/pipx removal)
 
 The setup wizard reads the DeepSeek key with getpass (input is hidden, like a
 password prompt) and, when `gh` is authenticated, offers to wire up GitHub
@@ -647,6 +649,91 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return subprocess.call(cmd, cwd=PKG_ROOT)
 
 
+# ── update ────────────────────────────────────────────────────────────
+REPO_URL = "git+https://github.com/Sermage/pr-reviewer"
+
+
+def _symlink_into_install() -> Path | None:
+    """~/.local/bin/pr-reviewer if it's a symlink pointing into our install."""
+    link = Path.home() / ".local" / "bin" / "pr-reviewer"
+    if not link.is_symlink():
+        return None
+    target = Path(os.readlink(link))
+    base = str(paths.package_root())
+    return link if str(target).startswith(base) else None
+
+
+def cmd_update(_: argparse.Namespace) -> int:
+    print(bold("\n⬆️  AI PR Reviewer — обновление\n"))
+    if paths.is_source_checkout():
+        repo = paths.package_root()
+        print(f"   репозиторий: {repo}")
+        rc = subprocess.call(["git", "-C", str(repo), "pull", "--ff-only"])
+        if rc != 0:
+            print(err("git pull не удался (локальные изменения или конфликт). "
+                      "Разреши вручную и повтори."))
+            return rc
+        venv_pip = repo / ".venv" / "bin" / "pip"
+        pip = [str(venv_pip)] if venv_pip.exists() else [sys.executable, "-m", "pip"]
+        rc = subprocess.call([*pip, "install", "-q", "-e", str(repo)])
+        if rc != 0:
+            print(err("не удалось переустановить зависимости"))
+            return rc
+        print(f"\n{ok('✓')} обновлено. Проверь: {bold(f'{CMD} doctor')}")
+        return 0
+
+    # Installed as a tool (pipx).
+    if shutil.which("pipx"):
+        print("   обновляю через pipx…")
+        rc = subprocess.call(["pipx", "upgrade", "ai-pr-reviewer"])
+        if rc != 0:
+            print(warn("   pipx upgrade не сработал — переустанавливаю из git…"))
+            rc = subprocess.call(["pipx", "install", "--force", REPO_URL])
+        if rc == 0:
+            print(f"\n{ok('✓')} обновлено. Проверь: {bold('pr-reviewer doctor')}")
+        return rc
+    print("   установлено как пакет — обнови так:")
+    print(f"   {bold('pipx upgrade ai-pr-reviewer')}")
+    print(f"   # или: pipx install --force {REPO_URL}")
+    return 0
+
+
+# ── uninstall ─────────────────────────────────────────────────────────
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    print(bold("\n🗑  AI PR Reviewer — удаление\n"))
+    source = paths.is_source_checkout()
+    force = getattr(args, "yes", False)
+
+    def confirm_rm(msg: str) -> bool:
+        return force or confirm(msg, default=False)
+
+    # 1) global symlink — remove only if it points into our install
+    link = _symlink_into_install()
+    if link is not None:
+        link.unlink()
+        print(f"{ok('✓')} удалён симлинк {link}")
+
+    # 2) config / user data
+    if source:
+        if ENV_PATH.exists() and confirm_rm(f"Удалить конфиг {ENV_PATH} (там ключ LLM)?"):
+            ENV_PATH.unlink()
+            print(f"{ok('✓')} удалён {ENV_PATH}")
+    else:
+        home = paths.home_dir()
+        if home.exists() and confirm_rm(f"Удалить конфиг и свои профили ({home})?"):
+            shutil.rmtree(home)
+            print(f"{ok('✓')} удалён {home}")
+
+    # 3) how to finish removing the program itself
+    print(bold("\nЧтобы удалить сам сервис:"))
+    if source:
+        print("   ./uninstall.sh                        # удалит .venv и симлинк")
+        print(f"   rm -rf {paths.package_root()}   # и папку репозитория")
+    else:
+        print("   pipx uninstall ai-pr-reviewer")
+    return 0
+
+
 # ── entrypoint ────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -685,6 +772,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="автоперезагрузка (dev)")
 
+    sub.add_parser("update", help="обновить сервис (git pull + переустановка или pipx upgrade)")
+
+    p_uninstall = sub.add_parser("uninstall", help="удалить сервис (симлинк, конфиг; подскажет про .venv/pipx)")
+    p_uninstall.add_argument("-y", "--yes", action="store_true", help="не спрашивать про удаление конфига")
+
     sub.add_parser("help", help="показать список команд и их описание")
     return parser
 
@@ -716,10 +808,14 @@ COMMANDS_HELP = """\
                           --model M             переопределить модель
                           --base-url URL        endpoint (для local/self-hosted)
   serve [--port --reload]   запустить webhook-сервис локально
+  update                обновить сервис (git pull + переустановка или pipx upgrade)
+  uninstall [-y]        удалить сервис: симлинк и конфиг (подскажет про .venv/pipx)
   help                  этот экран
 
 Примеры:
   pr-reviewer setup
+  pr-reviewer update               # подтянуть свежую версию
+  pr-reviewer uninstall            # удалить сервис
   pr-reviewer provider             # список провайдеров и активный
   pr-reviewer provider claude      # переключить на Claude API
   pr-reviewer provider local       # локальная модель (Ollama и т.п.)
@@ -748,6 +844,8 @@ def main(argv: list[str] | None = None) -> int:
         "profile": cmd_profile,
         "provider": cmd_provider,
         "serve": cmd_serve,
+        "update": cmd_update,
+        "uninstall": cmd_uninstall,
         "help": cmd_help,
     }
     handler = handlers.get(args.command)
