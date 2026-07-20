@@ -152,7 +152,7 @@ def _render_body(results: list[tuple[str, ReviewResult]], plan: Plan, inline_cou
         lines.append(f"💬 {inline_count} {word} оставлено прямо в коде.")
         lines.append("")
     lines.append(
-        "> Сгенерировано автоматически Android PR Reviewer (оркестратор). "
+        "> Сгенерировано автоматически AI PR Reviewer (оркестратор). "
         "Это подсказка, а не замена ревью человеком."
     )
     return "\n".join(lines)

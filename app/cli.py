@@ -1,4 +1,4 @@
-"""Android PR Reviewer — friendly command-line interface.
+"""AI PR Reviewer — friendly command-line interface.
 
 Commands:
     pr-reviewer setup     interactive wizard: API key (hidden), profile, GitHub Actions
@@ -151,7 +151,7 @@ def _step_status(r: subprocess.CompletedProcess, label: str) -> str:
 
 # ── setup wizard ──────────────────────────────────────────────────────
 def cmd_setup(_: argparse.Namespace) -> int:
-    print(bold("\n🤖 Android PR Reviewer — настройка\n"))
+    print(bold("\n🤖 AI PR Reviewer — настройка\n"))
     if not sys.stdin.isatty():
         print(err("Нужен интерактивный терминал. Запусти в обычном shell."))
         return 1
@@ -288,7 +288,7 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
 # ── doctor ────────────────────────────────────────────────────────────
 def cmd_doctor(_: argparse.Namespace) -> int:
-    print(bold("\n🩺 Android PR Reviewer — проверка\n"))
+    print(bold("\n🩺 AI PR Reviewer — проверка\n"))
     env_text = ENV_PATH.read_text() if ENV_PATH.exists() else ""
 
     def check(label: str, good: bool, hint: str = "") -> None:
@@ -637,7 +637,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pr-reviewer",
-        description="Android PR Reviewer — AI код-ревью для Android/KMP pull request'ов.",
+        description="AI PR Reviewer — AI код-ревью PR (Android по умолчанию, настраивается под любое направление).",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -676,7 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS_HELP = """\
-🤖 Android PR Reviewer — команды
+🤖 AI PR Reviewer — команды
 
   setup                 интерактивная настройка: провайдер LLM, ключ (скрытый
                         ввод), профиль ревью и, при желании, GitHub Actions

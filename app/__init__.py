@@ -1,1 +1,1 @@
-"""Android PR Reviewer — AI code-review webhook service."""
+"""AI PR Reviewer — AI code-review webhook service."""

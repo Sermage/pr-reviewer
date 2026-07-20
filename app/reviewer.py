@@ -188,7 +188,7 @@ def _render_body(
             lines.append(f"- {_SEVERITY_EMOJI.get(sev, '🔵')} **`{file}`** — {note}")
     elif not inline_count:
         lines.append("Серьёзных проблем не найдено. 👍")
-    lines += ["", "> Сгенерировано автоматически Android PR Reviewer. Это подсказка, а не замена ревью человеком."]
+    lines += ["", "> Сгенерировано автоматически AI PR Reviewer. Это подсказка, а не замена ревью человеком."]
     return "\n".join(lines)
 
 

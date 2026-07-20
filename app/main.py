@@ -1,8 +1,8 @@
-"""Android PR Reviewer — FastAPI webhook service.
+"""AI PR Reviewer — FastAPI webhook service.
 
-Receives GitHub `pull_request` webhooks, runs an Android-focused LLM review
-over the PR diff, and posts back a review with a verdict
-(APPROVE / REQUEST_CHANGES / COMMENT).
+Receives GitHub `pull_request` webhooks, runs an LLM review over the PR diff
+(profile-driven focus — Android by default), and posts back a review with a
+verdict (APPROVE / REQUEST_CHANGES / COMMENT).
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ log = logging.getLogger("android-pr-reviewer")
 
 settings = load_settings()
 app = FastAPI(
-    title="Android PR Reviewer",
-    description="AI code review for Android (Kotlin/Compose) pull requests.",
+    title="AI PR Reviewer",
+    description="AI code review for pull requests (Android by default, any focus via profiles).",
     version="0.1.0",
 )
 

@@ -22,7 +22,7 @@ from app.reviewer import review_diff  # noqa: E402
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Local Android PR Reviewer demo")
+    parser = argparse.ArgumentParser(description="Local AI PR Reviewer demo")
     parser.add_argument("diff", help="path to a .diff file")
     parser.add_argument("--profile", default=os.getenv("REVIEW_PROFILE", "android"),
                         help="android|compose|kmp|auto|<свой>")
