@@ -1,0 +1,32 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# GITHUB_TOKEN needs write access to post the review.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime deps
+        run: pip install httpx
+
+      - name: Run Android PR Reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          LLM_BASE_URL: https://api.deepseek.com
+          LLM_MODEL: deepseek-chat
+          REVIEW_PROFILE: ${{ vars.REVIEW_PROFILE || 'android' }}
+        run: python scripts/review_pr.py
