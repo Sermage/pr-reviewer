@@ -6,8 +6,9 @@ AI-сервис код-ревью для **Android** pull request'ов. Слуш
 с **inline-комментариями на конкретных строках** diff (см. ниже).
 
 Ревью-фокус вынесен в **профили**: из коробки `android`, `compose` и `kmp`,
-переключаются командой `pr-reviewer profile <имя>` (или env `REVIEW_PROFILE`),
-новые добавляются в `app/profiles.py` без правки остальной логики.
+переключаются командой `pr-reviewer profile <имя>` (или env `REVIEW_PROFILE`).
+**Свои профили** добавляются без правки кода — файлом `profiles.d/<имя>.md`
+или командой `pr-reviewer profile --add` (см. ниже).
 
 ```
 GitHub PR (opened/synchronize)
@@ -64,8 +65,9 @@ app/
   github_client.py # get_diff() / post_review() на httpx
   reviewer.py      # ядро: diff → LLM → verdict + inline-комменты + markdown
   diff_index.py    # парсер diff → валидные строки-«якоря» для inline-комментов
-  profiles.py      # профили ревью: android, kmp, ... (точка расширения)
+  profiles.py      # профили ревью (built-in) + загрузка своих из profiles.d/
   config.py        # чтение env
+profiles.d/        # свои профили: <имя>.md = инструкция «что проверять»
 scripts/demo_local.py  # прогон на локальном .diff без GitHub (для демо)
 samples/sample.diff    # пример с GlobalScope-утечкой
 tests/                 # моки webhook/LLM/diff — работают без сети
@@ -127,7 +129,7 @@ pytest
 
 ## Профили ревью (точка расширения)
 
-Из коробки: `android` (утечки Context, корутины, lifecycle), `compose`
+Встроенные: `android` (утечки Context, корутины, lifecycle), `compose`
 (recomposition, side effects, state hoisting), `kmp` (source sets, expect/actual).
 
 Переключение — из терминала:
@@ -138,14 +140,34 @@ pr-reviewer profile compose      # переключить локально (.env
 pr-reviewer profile kmp --sync   # + обновить repo variable для Actions
 ```
 
-Добавить новый фокус (напр. `gradle`) — дописать в `app/profiles.py`:
+### Свои профили — без правки кода
 
-```python
-PROFILES["gradle"] = Profile("gradle", GRADLE_FOCUS)
+Кастомный профиль — это просто файл `profiles.d/<имя>.md`, где текст файла =
+инструкция «что проверять». Он подхватывается автоматически везде: в CLI,
+визарде и GitHub Actions (файл коммитится в репо). Пример готового профиля —
+[`profiles.d/security.md`](profiles.d/security.md).
+
+```bash
+# из файла
+pr-reviewer profile --add security --from security.md
+# из строки
+pr-reviewer profile --add gradle --focus "Проверяй version catalogs, ..."
+# интерактивно (ввод фокуса, Ctrl-D в конце)
+pr-reviewer profile --add myteam
+# удалить свой профиль
+pr-reviewer profile --remove security
 ```
 
-и он сразу появится в `pr-reviewer profile` и `--profile`. Формат ответа
-(строгий JSON → вердикт + inline) общий для всех профилей, его трогать не нужно.
+Профиль сразу доступен в `pr-reviewer profile`, флаге `--profile` и как
+`REVIEW_PROFILE`. Свой профиль с именем встроенного его переопределяет; сами
+встроенные удалить/переопределить нельзя. Формат ответа (строгий JSON → вердикт
++ inline) общий для всех профилей — его трогать не нужно.
+
+> `profiles.d/` лежит в корне репозитория (не в `.gitignore`), поэтому свои
+> профили едут в GitHub Actions вместе с кодом.
+
+Альтернатива для «вечных» профилей — дописать в `app/profiles.py` словарь
+`PROFILES` (как это сделано для `android`/`compose`/`kmp`).
 
 ## Inline-комментарии
 

@@ -1,12 +1,22 @@
 """Review profiles: pluggable domain focus for the reviewer.
 
 A profile is just a name + a system prompt describing what to look for.
-Add a new one by registering it in ``PROFILES``; select it at runtime with
-the ``REVIEW_PROFILE`` env var. The rest of the pipeline is profile-agnostic.
+Built-ins live in ``PROFILES``; custom ones are plain files in ``profiles.d/``
+(``<name>.md`` where the file body is the review focus) and are picked up
+automatically — no code change needed. Select at runtime with ``REVIEW_PROFILE``
+(or ``pr-reviewer profile <name>``). The rest of the pipeline is profile-agnostic.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
+
+# Where user-defined profiles live. In the repo root so they're committed and
+# available to GitHub Actions too. Override with $PROFILES_DIR.
+PROFILES_DIR = Path(
+    os.getenv("PROFILES_DIR", str(Path(__file__).resolve().parent.parent / "profiles.d"))
+)
 
 # The strict-JSON contract every profile must ask the model to follow.
 # Kept separate so profiles only describe *what to review*, not *the format*.
@@ -72,6 +82,7 @@ class Profile:
         return f"{self.focus}\n{_JSON_CONTRACT}"
 
 
+# Built-in profiles, always available.
 PROFILES: dict[str, Profile] = {
     "android": Profile("android", ANDROID_FOCUS),
     "compose": Profile("compose", COMPOSE_FOCUS),
@@ -81,6 +92,36 @@ PROFILES: dict[str, Profile] = {
 DEFAULT_PROFILE = "android"
 
 
+def load_profiles() -> dict[str, Profile]:
+    """Built-in profiles plus any custom ones from ``profiles.d/*.md``.
+
+    A custom profile whose name matches a built-in overrides it.
+    """
+    profiles = dict(PROFILES)
+    if PROFILES_DIR.is_dir():
+        for path in sorted(PROFILES_DIR.glob("*.md")):
+            focus = path.read_text().strip()
+            if focus:
+                key = path.stem.lower()
+                profiles[key] = Profile(key, focus)
+    return profiles
+
+
+def available_profiles() -> list[str]:
+    """Names of all profiles (built-in + custom), in listing order."""
+    return list(load_profiles())
+
+
+def is_builtin(name: str) -> bool:
+    return name.lower() in PROFILES
+
+
+def custom_path(name: str) -> Path:
+    """Filesystem path of the custom-profile file for `name`."""
+    return PROFILES_DIR / f"{name.lower()}.md"
+
+
 def get_profile(name: str | None) -> Profile:
     """Return the requested profile, falling back to the default."""
-    return PROFILES.get((name or DEFAULT_PROFILE).lower(), PROFILES[DEFAULT_PROFILE])
+    profiles = load_profiles()
+    return profiles.get((name or DEFAULT_PROFILE).lower(), profiles[DEFAULT_PROFILE])

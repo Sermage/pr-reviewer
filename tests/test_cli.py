@@ -1,8 +1,9 @@
 import argparse
 
 import app.cli as cli
+import app.profiles as profiles
 from app.cli import cmd_profile, env_value, upsert_env
-from app.profiles import PROFILES, get_profile
+from app.profiles import PROFILES, get_profile, load_profiles
 
 
 def test_upsert_updates_existing_key():
@@ -40,8 +41,11 @@ def test_compose_profile_registered():
     assert "recomposition" in get_profile("compose").system_prompt.lower()
 
 
-def _profile_args(name="", repo="", sync=False):
-    return argparse.Namespace(name=name, repo=repo, sync=sync)
+def _profile_args(name="", repo="", sync=False, add="", remove="", focus="", from_file=""):
+    return argparse.Namespace(
+        name=name, repo=repo, sync=sync, add=add, remove=remove,
+        focus=focus, from_file=from_file,
+    )
 
 
 def test_profile_switch_writes_env(tmp_path, monkeypatch):
@@ -54,4 +58,32 @@ def test_profile_switch_writes_env(tmp_path, monkeypatch):
 
 def test_profile_rejects_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
     assert cmd_profile(_profile_args(name="perl")) == 1
+
+
+def test_custom_profile_loaded_from_dir(tmp_path, monkeypatch):
+    pdir = tmp_path / "profiles.d"
+    pdir.mkdir()
+    (pdir / "security.md").write_text("Ищи SQL-инъекции и утечки секретов.")
+    monkeypatch.setattr(profiles, "PROFILES_DIR", pdir)
+    loaded = load_profiles()
+    assert "security" in loaded
+    assert "SQL" in get_profile("security").system_prompt
+
+
+def test_profile_add_and_remove(tmp_path, monkeypatch):
+    pdir = tmp_path / "profiles.d"
+    monkeypatch.setattr(profiles, "PROFILES_DIR", pdir)
+
+    assert cmd_profile(_profile_args(add="security", focus="Ищи уязвимости.")) == 0
+    assert (pdir / "security.md").exists()
+    assert "security" in load_profiles()
+
+    assert cmd_profile(_profile_args(remove="security")) == 0
+    assert not (pdir / "security.md").exists()
+
+
+def test_cannot_override_builtin(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
+    assert cmd_profile(_profile_args(add="android", focus="x")) == 1

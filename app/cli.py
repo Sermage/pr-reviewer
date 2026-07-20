@@ -21,7 +21,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .profiles import DEFAULT_PROFILE, PROFILES
+from .profiles import (
+    DEFAULT_PROFILE,
+    available_profiles,
+    custom_path,
+    is_builtin,
+    load_profiles,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
@@ -176,7 +182,7 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
     # 3. review profile
     print(bold("\n3) Профиль ревью"))
-    names = list(PROFILES)
+    names = available_profiles()
     for i, name in enumerate(names, 1):
         mark = " (по умолчанию)" if name == DEFAULT_PROFILE else ""
         print(f"   {i}. {name}{mark}")
@@ -244,8 +250,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     key = env_value(env_text, "LLM_API_KEY")
     check("ключ DeepSeek задан", key not in ("", "sk-xxx"), "pr-reviewer setup")
     profile = env_value(env_text, "REVIEW_PROFILE") or DEFAULT_PROFILE
-    check(f"профиль ревью: {profile}", profile in PROFILES,
-          f"неизвестный профиль, доступны: {', '.join(PROFILES)}")
+    names = available_profiles()
+    check(f"профиль ревью: {profile}", profile in names,
+          f"неизвестный профиль, доступны: {', '.join(names)}")
     check("gh авторизован", gh_account() is not None, "gh auth login")
     check("workflow ai-review.yml", WORKFLOW.exists(), "восстанови .github/workflows/")
     print()
@@ -330,22 +337,72 @@ def _current_profile() -> str:
     return env_value(text, "REVIEW_PROFILE") or DEFAULT_PROFILE
 
 
-def cmd_profile(args: argparse.Namespace) -> int:
-    current = _current_profile()
+def _read_focus(args: argparse.Namespace) -> str:
+    """Resolve the focus text for a new profile: --focus, --from file, or prompt."""
+    if args.focus:
+        return args.focus.strip()
+    if args.from_file:
+        return Path(args.from_file).read_text().strip()
+    if sys.stdin.isatty():
+        print("   Опиши, что должен проверять профиль (заверши ввод Ctrl-D):")
+        return sys.stdin.read().strip()
+    return ""
 
-    # No name → just list what's available and which is active.
+
+def _add_profile(args: argparse.Namespace) -> int:
+    name = args.add.lower()
+    if is_builtin(name):
+        print(err(f"'{name}' — встроенный профиль, его нельзя переопределить."))
+        return 1
+    focus = _read_focus(args)
+    if not focus:
+        print(err("Пустой focus — профиль не создан. Задай --focus или --from файл."))
+        return 1
+    path = custom_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(focus + "\n")
+    print(f"{ok('✓')} профиль {bold(name)} создан → {path}")
+    print(f"   активировать: {bold(f'pr-reviewer profile {name}')}")
+    return 0
+
+
+def _remove_profile(args: argparse.Namespace) -> int:
+    name = args.remove.lower()
+    if is_builtin(name):
+        print(err(f"'{name}' — встроенный профиль, удалить нельзя."))
+        return 1
+    path = custom_path(name)
+    if not path.exists():
+        print(err(f"Свой профиль '{name}' не найден."))
+        return 1
+    path.unlink()
+    print(f"{ok('✓')} профиль {bold(name)} удалён")
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    if args.add:
+        return _add_profile(args)
+    if args.remove:
+        return _remove_profile(args)
+
+    current = _current_profile()
+    profiles = load_profiles()
+
+    # No name → list what's available and which is active.
     if not args.name:
         print(bold("\nПрофили ревью:\n"))
-        for name in PROFILES:
-            default = " (по умолчанию)" if name == DEFAULT_PROFILE else ""
+        for name in profiles:
+            kind = "встроенный" if is_builtin(name) else "свой"
             status = ok("● активен") if name == current else "○"
-            print(f"   {name:<9}{default:<16} {status}")
-        print(f"\nПереключить: {bold('pr-reviewer profile <имя>')}\n")
+            print(f"   {name:<12}{kind:<14} {status}")
+        print(f"\nПереключить: {bold('pr-reviewer profile <имя>')}")
+        print(f"Добавить свой: {bold('pr-reviewer profile --add <имя> --from focus.md')}\n")
         return 0
 
     name = args.name.lower()
-    if name not in PROFILES:
-        print(err(f"Неизвестный профиль '{name}'. Доступны: {', '.join(PROFILES)}"))
+    if name not in profiles:
+        print(err(f"Неизвестный профиль '{name}'. Доступны: {', '.join(profiles)}"))
         return 1
 
     # Local switch (.env).
@@ -393,8 +450,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--approve", action="store_true", help="разрешить вердикт APPROVE")
     p_review.add_argument("--dry-run", action="store_true", help="показать ревью, не постить")
 
-    p_profile = sub.add_parser("profile", help="показать/переключить профиль ревью")
-    p_profile.add_argument("name", nargs="?", default="", help="имя профиля (android/compose/kmp)")
+    p_profile = sub.add_parser("profile", help="показать/переключить/добавить профиль ревью")
+    p_profile.add_argument("name", nargs="?", default="", help="имя профиля для переключения")
+    p_profile.add_argument("--add", default="", metavar="NAME", help="создать свой профиль")
+    p_profile.add_argument("--remove", default="", metavar="NAME", help="удалить свой профиль")
+    p_profile.add_argument("--focus", default="", help="текст focus для --add (иначе --from или ввод)")
+    p_profile.add_argument("--from", dest="from_file", default="", help="файл с текстом focus для --add")
     p_profile.add_argument("--repo", default="", help="owner/name для синхронизации repo variable")
     p_profile.add_argument("--sync", action="store_true", help="без вопроса обновить repo variable")
 
@@ -418,8 +479,11 @@ COMMANDS_HELP = """\
                           --dry-run           показать ревью, ничего не постя
                           --approve           разрешить вердикт APPROVE
   profile [имя]         показать или переключить профиль ревью
-                          android | compose | kmp
-                          --sync   обновить и repo variable (для Actions)
+                          встроенные: android | compose | kmp (+ свои)
+                          --sync                обновить и repo variable (для Actions)
+                          --add NAME --from f   создать свой профиль из файла
+                          --add NAME --focus "" создать свой профиль из текста
+                          --remove NAME         удалить свой профиль
   serve [--port --reload]   запустить webhook-сервис локально
   help                  этот экран
 
@@ -427,6 +491,7 @@ COMMANDS_HELP = """\
   pr-reviewer setup
   pr-reviewer profile              # список и активный
   pr-reviewer profile compose      # переключить на Jetpack Compose
+  pr-reviewer profile --add security --from security.md   # свой профиль
   pr-reviewer review --pr 1 --dry-run
   pr-reviewer review --repo Sermage/pr-reviewer --pr 1
 """
