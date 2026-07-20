@@ -100,9 +100,11 @@ def _render_body(
     parsed: dict, profile_name: str, leftover: list[dict], inline_count: int
 ) -> str:
     summary = parsed.get("summary", "").strip() or "Автоматическое ревью выполнено."
-    title = {"android": "Android", "kmp": "Kotlin Multiplatform"}.get(
-        profile_name, profile_name
-    )
+    title = {
+        "android": "Android",
+        "compose": "Jetpack Compose",
+        "kmp": "Kotlin Multiplatform",
+    }.get(profile_name, profile_name)
     lines = [f"## 🤖 AI-ревью ({title})", "", summary, ""]
     if inline_count:
         lines.append(f"💬 {inline_count} замечани{'е' if inline_count == 1 else 'я/й'} оставлено прямо в коде.")

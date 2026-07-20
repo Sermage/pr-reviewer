@@ -5,9 +5,9 @@ AI-сервис код-ревью для **Android** pull request'ов. Слуш
 и постит обратно **review с вердиктом** — `APPROVE` / `REQUEST_CHANGES` / `COMMENT` —
 с **inline-комментариями на конкретных строках** diff (см. ниже).
 
-Ревью-фокус вынесен в **профили**: из коробки `android` и `kmp`, переключается
-одной env-переменной `REVIEW_PROFILE`, новые добавляются в `app/profiles.py`
-без правки остальной логики.
+Ревью-фокус вынесен в **профили**: из коробки `android`, `compose` и `kmp`,
+переключаются командой `pr-reviewer profile <имя>` (или env `REVIEW_PROFILE`),
+новые добавляются в `app/profiles.py` без правки остальной логики.
 
 ```
 GitHub PR (opened/synchronize)
@@ -127,14 +127,25 @@ pytest
 
 ## Профили ревью (точка расширения)
 
-Добавить новый фокус (напр. `compose`, `gradle`) — дописать в `app/profiles.py`:
+Из коробки: `android` (утечки Context, корутины, lifecycle), `compose`
+(recomposition, side effects, state hoisting), `kmp` (source sets, expect/actual).
 
-```python
-PROFILES["compose"] = Profile("compose", COMPOSE_FOCUS)
+Переключение — из терминала:
+
+```bash
+pr-reviewer profile              # список + активный
+pr-reviewer profile compose      # переключить локально (.env)
+pr-reviewer profile kmp --sync   # + обновить repo variable для Actions
 ```
 
-и выставить `REVIEW_PROFILE=compose`. Формат ответа (строгий JSON → вердикт)
-общий для всех профилей, его трогать не нужно.
+Добавить новый фокус (напр. `gradle`) — дописать в `app/profiles.py`:
+
+```python
+PROFILES["gradle"] = Profile("gradle", GRADLE_FOCUS)
+```
+
+и он сразу появится в `pr-reviewer profile` и `--profile`. Формат ответа
+(строгий JSON → вердикт + inline) общий для всех профилей, его трогать не нужно.
 
 ## Inline-комментарии
 

@@ -324,6 +324,48 @@ def cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── profile (switch review focus) ─────────────────────────────────────
+def _current_profile() -> str:
+    text = ENV_PATH.read_text() if ENV_PATH.exists() else ""
+    return env_value(text, "REVIEW_PROFILE") or DEFAULT_PROFILE
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    current = _current_profile()
+
+    # No name → just list what's available and which is active.
+    if not args.name:
+        print(bold("\nПрофили ревью:\n"))
+        for name in PROFILES:
+            default = " (по умолчанию)" if name == DEFAULT_PROFILE else ""
+            status = ok("● активен") if name == current else "○"
+            print(f"   {name:<9}{default:<16} {status}")
+        print(f"\nПереключить: {bold('pr-reviewer profile <имя>')}\n")
+        return 0
+
+    name = args.name.lower()
+    if name not in PROFILES:
+        print(err(f"Неизвестный профиль '{name}'. Доступны: {', '.join(PROFILES)}"))
+        return 1
+
+    # Local switch (.env).
+    base = ENV_PATH.read_text() if ENV_PATH.exists() else _base_env()
+    ENV_PATH.write_text(upsert_env(base, {"REVIEW_PROFILE": name}))
+    print(f"{ok('✓')} профиль → {bold(name)} (.env)")
+
+    # Optionally sync to the GitHub Actions repo variable.
+    repo = args.repo or gh_default_repo()
+    if repo and gh_account():
+        do_sync = args.sync or (
+            sys.stdin.isatty()
+            and confirm(f"Обновить и repo variable REVIEW_PROFILE в {repo}?", default=True)
+        )
+        if do_sync:
+            r = _gh("variable", "set", "REVIEW_PROFILE", "--repo", repo, "--body", name)
+            print(_step_status(r, f"variable REVIEW_PROFILE={name} → {repo}"))
+    return 0
+
+
 # ── serve ─────────────────────────────────────────────────────────────
 def cmd_serve(args: argparse.Namespace) -> int:
     cmd = [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(args.port)]
@@ -351,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--approve", action="store_true", help="разрешить вердикт APPROVE")
     p_review.add_argument("--dry-run", action="store_true", help="показать ревью, не постить")
 
+    p_profile = sub.add_parser("profile", help="показать/переключить профиль ревью")
+    p_profile.add_argument("name", nargs="?", default="", help="имя профиля (android/compose/kmp)")
+    p_profile.add_argument("--repo", default="", help="owner/name для синхронизации repo variable")
+    p_profile.add_argument("--sync", action="store_true", help="без вопроса обновить repo variable")
+
     p_serve = sub.add_parser("serve", help="запустить webhook-сервис локально")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="автоперезагрузка (dev)")
@@ -367,14 +414,19 @@ COMMANDS_HELP = """\
   doctor                проверить, что всё настроено (ключ, профиль, gh, workflow)
   review --pr N         разовое ревью pull request прямо из терминала
                           --repo owner/name   репозиторий (по умолчанию текущий)
-                          --profile android|kmp
+                          --profile android|compose|kmp
                           --dry-run           показать ревью, ничего не постя
                           --approve           разрешить вердикт APPROVE
+  profile [имя]         показать или переключить профиль ревью
+                          android | compose | kmp
+                          --sync   обновить и repo variable (для Actions)
   serve [--port --reload]   запустить webhook-сервис локально
   help                  этот экран
 
 Примеры:
   pr-reviewer setup
+  pr-reviewer profile              # список и активный
+  pr-reviewer profile compose      # переключить на Jetpack Compose
   pr-reviewer review --pr 1 --dry-run
   pr-reviewer review --repo Sermage/pr-reviewer --pr 1
 """
@@ -392,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
         "setup": cmd_setup,
         "doctor": cmd_doctor,
         "review": cmd_review,
+        "profile": cmd_profile,
         "serve": cmd_serve,
         "help": cmd_help,
     }

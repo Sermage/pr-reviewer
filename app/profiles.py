@@ -39,6 +39,17 @@ ANDROID_FOCUS = """\
 - очевидные баги, небезопасные касты, NPE, забытые null-проверки.
 """
 
+COMPOSE_FOCUS = """\
+Ты — инженер по Jetpack Compose, делаешь код-ревью pull request'а.
+Смотри на специфику Compose и корректность:
+- лишние recomposition: нестабильные параметры, лямбды и объекты, создаваемые в теле composable;
+- тяжёлые вычисления в composable без remember/derivedStateOf;
+- side effects не в правильных API (LaunchedEffect/DisposableEffect/SideEffect) с корректными ключами;
+- состояние: hoisting, mutableStateOf без remember, утечка state между рекомпозициями;
+- работа со списками без ключей в LazyColumn/LazyRow, modifier order, лишние аллокации в отрисовке;
+- очевидные баги, небезопасные касты, NPE.
+"""
+
 KMP_FOCUS = """\
 Ты — инженер Kotlin Multiplatform (KMP), делаешь код-ревью pull request'а.
 Смотри на специфику KMP и корректность:
@@ -63,6 +74,7 @@ class Profile:
 
 PROFILES: dict[str, Profile] = {
     "android": Profile("android", ANDROID_FOCUS),
+    "compose": Profile("compose", COMPOSE_FOCUS),
     "kmp": Profile("kmp", KMP_FOCUS),
 }
 
