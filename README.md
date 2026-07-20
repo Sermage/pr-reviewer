@@ -1,124 +1,148 @@
 # Android PR Reviewer
 
-AI-сервис код-ревью для **Android** pull request'ов. Слушает GitHub webhook,
-берёт diff PR, прогоняет его через LLM с Android-заточенным промптом
-и постит обратно **review с вердиктом** — `APPROVE` / `REQUEST_CHANGES` / `COMMENT` —
-с **inline-комментариями на конкретных строках** diff (см. ниже).
+AI-код-ревьюер для **Android** pull request'ов. Берёт diff PR, прогоняет через
+LLM с Android-заточенным промптом и оставляет **review с вердиктом** —
+`APPROVE` / `REQUEST_CHANGES` / `COMMENT` — с комментариями прямо на строках кода.
 
-LLM-провайдер **переключаемый**: из коробки `deepseek`, `openai`, `claude`
-и `local` (локальная модель через Ollama/LM Studio/vLLM) —
-командой `pr-reviewer provider <имя>` (см. ниже).
+Работает тремя способами: авто-ревью на каждый PR через **GitHub Actions**,
+разовое ревью **из терминала** и как **webhook-сервис**.
 
-Ревью-фокус вынесен в **профили**: из коробки `android`, `compose` и `kmp`,
-переключаются командой `pr-reviewer profile <имя>` (или env `REVIEW_PROFILE`).
-**Свои профили** добавляются без правки кода — файлом `profiles.d/<имя>.md`
-или командой `pr-reviewer profile --add` (см. ниже). А мета-профиль **`auto`**
-включает **оркестратор**: он сам определяет направление(я) PR и запускает
-подходящие профили (сразу несколько при необходимости) — см. ниже.
+## Возможности
 
-```
-GitHub PR (opened/synchronize)
-      │  webhook POST + HMAC-подпись (X-Hub-Signature-256)
-      ▼
-FastAPI /webhook  ──▶ 202 сразу, ревью считается в фоне
-      │  1) verify_signature   2) get PR diff (GitHub API)
-      │  3) review_diff (DeepSeek, профиль)   4) post_review
-      ▼
-Review-комментарий в PR
-```
+- ✅ **Вердикт + inline-комментарии** — замечания вешаются на конкретные строки diff.
+- 🔁 **Любая LLM** — DeepSeek, OpenAI, Claude или **локальная модель** (Ollama /
+  LM Studio / vLLM, без ключа и без облака). Переключается одной командой.
+- 🎯 **Профили ревью** — `android`, `compose`, `kmp` из коробки; **свои профили**
+  добавляются без правки кода.
+- 🤖 **Авто-режим `auto`** — сам определяет, про что PR (Compose? сеть? KMP?), и
+  запускает подходящие профили, даже несколько сразу.
+- 🖥️ **Дружелюбный CLI** — мастер настройки со скрытым вводом ключа, `doctor`,
+  разовое ревью, управление профилями и провайдерами.
 
-## Быстрый старт (визард)
-
-Из коробки — одна команда, дальше диалог:
+## Установка
 
 ```bash
+git clone https://github.com/Sermage/pr-reviewer
+cd pr-reviewer
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+```
+
+## Быстрый старт
+
+Одна команда — дальше мастер проведёт по шагам (окружение → провайдер LLM →
+ключ (вводится скрыто) → профиль → GitHub Actions):
+
+```bash
 pr-reviewer setup
 ```
 
-Визард по шагам:
-1. **Окружение** — проверяет Python и авторизацию `gh`.
-2. **Провайдер LLM** — выбор `deepseek` / `openai` / `claude` / `local`.
-3. **Ключ** — вводится **скрыто** (как пароль, символы не видны; в `gh`
-   передаётся через stdin, а не в командной строке) и сохраняется в `.env`.
-   Для `local` шаг пропускается — ключ не нужен.
-4. **Профиль ревью** — выбор `android` / `compose` / `kmp` / свой.
-5. **GitHub Actions** — если `gh` авторизован, сам предлагает настроить авто-ревью:
-   ставит секрет `LLM_API_KEY`, variables `REVIEW_PROFILE`/`LLM_PROVIDER`/`LLM_MODEL`,
-   проверяет workflow. А если `gh` установлен, но не авторизован — визард предложит
-   `gh auth login` прямо в процессе.
-
-Другие команды:
+Проверить, что всё на месте:
 
 ```bash
-pr-reviewer help                      # список команд с описанием
-pr-reviewer doctor                    # проверить настройку (ключ, профиль, gh, workflow)
-pr-reviewer review --pr 1 --dry-run   # разовое ревью PR из терминала (без постинга)
+pr-reviewer doctor
+```
+
+## Использование
+
+```bash
+pr-reviewer setup                     # интерактивная настройка
+pr-reviewer doctor                    # проверить настройку
+pr-reviewer review --pr 1 --dry-run   # разовое ревью PR (показать, не постить)
 pr-reviewer review --repo o/n --pr 1  # ревью и публикация в PR
-pr-reviewer serve                     # запустить webhook-сервис локально
+pr-reviewer profile                   # профили ревью
+pr-reviewer provider                  # LLM-провайдеры
+pr-reviewer serve                     # webhook-сервис локально
+pr-reviewer help                      # все команды
 ```
 
-`review` берёт токен из `GITHUB_TOKEN` или из `gh auth token`, ключ и профиль — из
-`.env`. Флаги: `--profile android|kmp`, `--dry-run` (показать, не постить),
-`--approve` (разрешить вердикт APPROVE — по умолчанию даунгрейдится до COMMENT,
-чтобы не упереться в запрет аппрувить свой же PR).
+`review` берёт токен из `GITHUB_TOKEN` или `gh auth token`, ключ и настройки —
+из `.env`. Флаги: `--profile <имя>`, `--dry-run`, `--approve`.
 
-## Структура
-
-```
-app/
-  cli.py           # команды pr-reviewer: setup (визард) / doctor / serve
-  main.py          # FastAPI: /webhook, /health; фон через BackgroundTasks
-  security.py      # verify_signature — HMAC-SHA256 webhook-подписи
-  github_client.py # get_diff() / post_review() на httpx
-  reviewer.py      # ядро: diff → LLM → verdict + inline-комменты + markdown
-  diff_index.py    # парсер diff → валидные строки-«якоря» для inline-комментов
-  profiles.py      # профили ревью (built-in) + загрузка своих из profiles.d/
-  orchestrator.py  # авто-выбор профиля(ей) по diff (мета-профиль auto)
-  providers.py     # LLM-провайдеры: deepseek/openai/claude/local (2 протокола)
-  config.py        # чтение env
-profiles.d/        # свои профили: <имя>.md = инструкция «что проверять»
-scripts/demo_local.py  # прогон на локальном .diff без GitHub (для демо)
-samples/sample.diff    # пример с GlobalScope-утечкой
-tests/                 # моки webhook/LLM/diff — работают без сети
-```
-
-## Запуск локально
+### Провайдер LLM
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pr-reviewer provider                 # список + активный
+pr-reviewer provider claude          # Claude API
+pr-reviewer provider openai --model gpt-4o
+pr-reviewer provider local           # локальная модель (Ollama по умолчанию)
+```
+
+| Провайдер | Модель по умолчанию | Ключ |
+|---|---|---|
+| `deepseek` | `deepseek-chat` | нужен |
+| `openai` | `gpt-4o-mini` | нужен |
+| `claude` | `claude-sonnet-5` | нужен |
+| `local` | `qwen2.5-coder` (Ollama) | не нужен |
+
+Локальная модель целиком офлайн:
+
+```bash
+ollama pull qwen2.5-coder
+pr-reviewer provider local
+pr-reviewer review --pr 1 --dry-run
+```
+
+### Профили ревью
+
+```bash
+pr-reviewer profile                  # список + активный
+pr-reviewer profile compose          # переключить фокус
+pr-reviewer profile auto             # авто-режим (оркестратор)
+```
+
+Свой профиль — без правки кода:
+
+```bash
+pr-reviewer profile --add security --from security.md   # из файла
+pr-reviewer profile --add gradle --focus "Проверяй version catalogs, ..."
+pr-reviewer profile --show security   # посмотреть, что проверяет
+pr-reviewer profile --edit security   # отредактировать ($EDITOR)
+pr-reviewer profile --remove security
+```
+
+### Авто-режим (`auto`)
+
+`pr-reviewer profile auto` включает оркестратор: он сам смотрит на diff,
+определяет направления PR и запускает подходящие профили (несколько при
+необходимости). Если для найденного направления профиля нет — использует
+дефолтный и честно пишет в заключении, что точность по этому направлению снижена
+и какой профиль стоит добавить.
+
+## GitHub Actions (авто-ревью на каждый PR)
+
+Мастер `pr-reviewer setup` предложит настроить всё сам (если `gh` авторизован):
+поставит секрет с ключом и переменные провайдера/профиля. Workflow уже лежит в
+[`.github/workflows/ai-review.yml`](.github/workflows/ai-review.yml) — ревью
+запускается на `opened` / `synchronize` / `reopened`.
+
+Вручную: секрет `LLM_API_KEY` и (опционально) variables `REVIEW_PROFILE`,
+`LLM_PROVIDER`, `LLM_MODEL`.
+
+## Webhook-сервис
+
+```bash
 cp .env.example .env        # впиши ключи
-
-uvicorn app.main:app --reload --port 8000
+pr-reviewer serve           # http://localhost:8000
 ```
 
-### Прокинуть webhook на localhost (Mac)
-GitHub не достучится до `localhost`, поэтому туннель:
+GitHub не достучится до `localhost` — пробрось туннель и укажи URL в
+**Settings → Webhooks** (Payload = `<url>/webhook`, Content type =
+`application/json`, Secret = `WEBHOOK_SECRET`, событие = **Pull requests**):
 
 ```bash
-# вариант smee.io (рекомендует GitHub)
-npx smee-client --url https://smee.io/<your-channel> --target http://localhost:8000/webhook
-# или ngrok
-ngrok http 8000
+npx smee-client --url https://smee.io/<channel> --target http://localhost:8000/webhook
+# или: ngrok http 8000
 ```
-
-Публичный URL → в настройки репозитория **Settings → Webhooks**:
-Payload URL = `<url>/webhook`, Content type = `application/json`,
-Secret = твой `WEBHOOK_SECRET`, событие = **Pull requests**.
 
 ## Демо без GitHub
 
-Весь конвейер ревью можно прогнать на сохранённом diff — удобно для защиты:
+Прогнать конвейер на сохранённом diff (удобно для показа):
 
 ```bash
 LLM_API_KEY=sk-... python scripts/demo_local.py samples/sample.diff
-# переключить профиль:
-python scripts/demo_local.py samples/sample.diff --profile kmp
+python scripts/demo_local.py samples/sample.diff --profile auto
 ```
-
-А чтобы гонять и webhook-путь без постинга в GitHub — `POST_REVIEWS=false` (dry-run,
-результат уходит в лог).
 
 ## Тесты
 
@@ -126,194 +150,6 @@ python scripts/demo_local.py samples/sample.diff --profile kmp
 pytest
 ```
 
-Тесты не ходят в сеть: webhook-подпись, маппинг вердиктов, выбор профиля и
-обработчик `/webhook` проверяются на моках.
+---
 
-## Аутентификация: сейчас и потом
-
-- **Сейчас (MVP):** Personal Access Token (`GITHUB_TOKEN`) с scope `repo`. Просто и
-  достаточно для одного аккаунта/демо.
-- **Дальше:** GitHub App (JWT → installation token) — ставится на любой репозиторий,
-  свой бот-аватар. `github_client.py` изолирует работу с API, так что миграция
-  затрагивает только слой аутентификации.
-
-## Провайдеры LLM
-
-Ревьюер общается с моделью по одному из двух протоколов, а конкретный бэкенд —
-это **пресет** (протокол + `base_url` + модель по умолчанию):
-
-| Провайдер | Протокол | Endpoint по умолчанию | Модель | Ключ |
-|---|---|---|---|---|
-| `deepseek` | OpenAI-совместимый | `https://api.deepseek.com` | `deepseek-chat` | нужен |
-| `openai` | OpenAI-совместимый | `https://api.openai.com/v1` | `gpt-4o-mini` | нужен |
-| `claude` | Anthropic | `https://api.anthropic.com` | `claude-sonnet-5` | нужен |
-| `local` | OpenAI-совместимый | `http://localhost:11434/v1` | `qwen2.5-coder` | не нужен |
-
-Переключение — из терминала:
-
-```bash
-pr-reviewer provider                 # список + активный
-pr-reviewer provider claude          # Claude API
-pr-reviewer provider openai --model gpt-4o
-pr-reviewer provider local           # локальная модель (Ollama по умолчанию)
-pr-reviewer provider local --base-url http://localhost:1234/v1  # LM Studio
-```
-
-Команда пишет `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` в `.env`. Ключ
-задаётся отдельно (`pr-reviewer setup` или `LLM_API_KEY` в `.env`); для `local`
-ключ не требуется. `setup` тоже спрашивает провайдера первым шагом.
-
-Под капотом всего два протокола: **OpenAI-совместимый** `/chat/completions`
-(DeepSeek, OpenAI и любые локальные серверы — Ollama, LM Studio, vLLM) и
-**Anthropic** `/v1/messages` (Claude). Добавить ещё один OpenAI-совместимый
-сервис — это просто новый пресет или `provider local --base-url <url>`, кода
-трогать не нужно. Ответ модели парсится устойчиво: строгий JSON-режим там, где
-он есть (`response_format`), и снятие ```json-обёртки для остальных.
-
-**Локальная модель (пример, Ollama):**
-
-```bash
-ollama pull qwen2.5-coder
-pr-reviewer provider local
-pr-reviewer review --pr 1 --dry-run   # ключ не нужен, всё локально
-```
-
-**В GitHub Actions** провайдер задаётся repo variables (`LLM_PROVIDER`,
-`LLM_MODEL`, `LLM_BASE_URL`), а ключ — секретом `LLM_API_KEY`
-(старый `DEEPSEEK_API_KEY` поддерживается как fallback). `local`, разумеется, в
-Actions не работает — runner не достучится до `localhost`.
-
-## Оркестратор профилей (`auto`)
-
-Мета-профиль **`auto`** не проверяет код сам — он *решает, какими профилями
-проверять*. Логика:
-
-1. **Быстрый анализ** diff эвристикой (пути файлов + добавленные строки, без
-   лишнего LLM-вызова): считает сигналы каждого направления — Compose, KMP,
-   сеть, БД, безопасность, Android.
-2. **План**: на каждое найденное направление, у которого есть профиль,
-   запускается отдельный агент (`review_diff`) — их может быть несколько
-   (например, `android` + `compose` в одном PR). Если у направления **нет**
-   профиля — берётся дефолтный, а в заключение добавляется предупреждение, что
-   точность по этому направлению снижена. Если сигналов нет вовсе — просто
-   дефолтный профиль.
-3. **Слияние**: худший вердикт побеждает (`REQUEST_CHANGES` > `COMMENT` >
-   `APPROVE`), inline-комментарии объединяются и помечаются профилем
-   (`[compose] …`), сводки складываются по секциям.
-
-```bash
-pr-reviewer profile auto                 # включить оркестратор
-pr-reviewer review --pr 1 --profile auto --dry-run
-```
-
-Пример вывода на PR, где есть и Compose, и Retrofit (сеть), но профиля `network`
-нет:
-
-```
-## 🤖 AI-ревью (оркестратор профилей)
-
-**Определённые направления:** Android (12), Jetpack Compose (8), Сеть / API (4)
-**Запущенные профили:** android, compose
-
-> ⚠️ Нет профиля для направления «Сеть / API» — ревью по нему сделано дефолтным
-> профилем `android`; точность по этому направлению снижена.
-> Добавить профиль: `pr-reviewer profile --add network`.
-
-### Профиль `android` — Android
-…
-### Профиль `compose` — Jetpack Compose
-…
-```
-
-Предупреждение — это прямая подсказка расширить систему: `pr-reviewer profile
---add network` создаст недостающий профиль, и в следующий раз оркестратор
-запустит его как отдельного агента. Количество параллельных агентов ограничено
-(`MAX_AGENTS`), чтобы PR «обо всём» не разросся бесконтрольно.
-
-## Профили ревью (точка расширения)
-
-Встроенные: `android` (утечки Context, корутины, lifecycle), `compose`
-(recomposition, side effects, state hoisting), `kmp` (source sets, expect/actual).
-
-Переключение — из терминала:
-
-```bash
-pr-reviewer profile              # список + активный
-pr-reviewer profile compose      # переключить локально (.env)
-pr-reviewer profile kmp --sync   # + обновить repo variable для Actions
-```
-
-### Свои профили — без правки кода
-
-Кастомный профиль — это просто файл `profiles.d/<имя>.md`, где текст файла =
-инструкция «что проверять». Он подхватывается автоматически везде: в CLI,
-визарде и GitHub Actions (файл коммитится в репо). Пример готового профиля —
-[`profiles.d/security.md`](profiles.d/security.md).
-
-```bash
-# из файла
-pr-reviewer profile --add security --from security.md
-# из строки
-pr-reviewer profile --add gradle --focus "Проверяй version catalogs, ..."
-# интерактивно (ввод фокуса, Ctrl-D в конце)
-pr-reviewer profile --add myteam
-# посмотреть текущий focus профиля
-pr-reviewer profile --show security
-# отредактировать свой профиль ($EDITOR; или --focus/--from без интерактива)
-pr-reviewer profile --edit security
-pr-reviewer profile --edit security --from new-focus.md
-# удалить свой профиль
-pr-reviewer profile --remove security
-```
-
-`--show` работает и для встроенных (посмотреть, что проверяет `android`/`compose`/
-`kmp`). `--edit` — только для своих профилей: встроенные меняются правкой
-`app/profiles.py`. Повторный `--add` существующего профиля предупреждает о
-перезаписи (в терминале спросит подтверждение).
-
-Профиль сразу доступен в `pr-reviewer profile`, флаге `--profile` и как
-`REVIEW_PROFILE`. Свой профиль с именем встроенного его переопределяет; сами
-встроенные удалить/переопределить нельзя. Формат ответа (строгий JSON → вердикт
-+ inline) общий для всех профилей — его трогать не нужно.
-
-> `profiles.d/` лежит в корне репозитория (не в `.gitignore`), поэтому свои
-> профили едут в GitHub Actions вместе с кодом.
-
-Альтернатива для «вечных» профилей — дописать в `app/profiles.py` словарь
-`PROFILES` (как это сделано для `android`/`compose`/`kmp`).
-
-## Inline-комментарии
-
-Замечания вешаются **на конкретные строки** diff, а не только общим блоком.
-Модель для каждого замечания возвращает `file` + `line` (строка в новой версии
-файла), и сервис постит их как inline review comments.
-
-GitHub роняет **весь** review с ошибкой `422`, если inline-коммент указывает на
-строку, которой нет в diff. Поэтому:
-
-1. **`app/diff_index.py`** парсит unified diff и собирает по каждому файлу
-   множество допустимых строк-«якорей» — добавленные (`+`) и контекстные (` `)
-   строки на правой (новой) стороне diff.
-2. **`reviewer.py`** делит замечания: те, что попали на валидный якорь → уходят
-   в inline-комментарии; остальные не теряются, а сводятся в тело ревью
-   (раздел «Прочие замечания»).
-3. **`github_client.post_review`** отправляет `comments`, а при `422`
-   **откатывается на ревью без inline** — один плохой якорь не «съест» весь отзыв.
-
-```
-issue {file, line, note}
-        │
-        ▼  line ∈ commentable_lines(diff)[file] ?
-   ┌────┴─────┐
-  да          нет
-   │            │
-inline       в тело ревью
-```
-
-Пример живого ревью с inline-комментами — [PR #1](https://github.com/Sermage/pr-reviewer/pull/1).
-
-## Статус
-
-MVP. Ключи GitHub/LLM подставляются через `.env`; без них работает демо-режим
-на моках (`pytest`, `demo_local.py` с фейковым ключом упадёт только на реальном
-вызове LLM — сам конвейер и выбор профиля проверяются офлайн).
+Как устроено внутри — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
