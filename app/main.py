@@ -10,6 +10,7 @@ import logging
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 
+from . import __version__
 from .config import load_settings
 from .github_client import GitHubClient
 from .reviewer import review_diff
@@ -22,7 +23,7 @@ settings = load_settings()
 app = FastAPI(
     title="AI PR Reviewer",
     description="AI code review for pull requests (Android by default, any focus via profiles).",
-    version="0.1.0",
+    version=__version__,
 )
 
 
