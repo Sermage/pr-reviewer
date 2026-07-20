@@ -42,6 +42,8 @@ async def run_review(owner: str, repo: str, number: int) -> None:
             base_url=settings.llm_base_url,
             model=settings.llm_model,
             profile=settings.review_profile,
+            provider=settings.llm_kind,
+            json_mode=settings.llm_json_mode,
         )
         log.info("Review for %s/%s#%s -> %s", owner, repo, number, result.event)
         if settings.post_reviews:

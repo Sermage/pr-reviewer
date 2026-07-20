@@ -10,7 +10,8 @@ Inputs (flags override env):
 
 Env:
     GITHUB_TOKEN   provided automatically by Actions (needs pull-requests: write)
-    LLM_API_KEY / LLM_BASE_URL / LLM_MODEL   DeepSeek credentials
+    LLM_PROVIDER   deepseek | openai | claude | local (default: deepseek)
+    LLM_API_KEY / LLM_BASE_URL / LLM_MODEL   provider credentials/overrides
 
 Note: GitHub Actions' GITHUB_TOKEN is *not permitted to approve* PRs, so when
 running under Actions an APPROVE verdict is downgraded to COMMENT to avoid a
@@ -27,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.providers import resolve as resolve_llm  # noqa: E402
 from app.runner import review_pr  # noqa: E402
 
 
@@ -60,12 +62,21 @@ async def main() -> int:
     # Actions' token is not permitted to approve PRs — downgrade there.
     allow_approve = os.getenv("GITHUB_ACTIONS") != "true"
 
+    llm = resolve_llm(
+        provider=os.getenv("LLM_PROVIDER"),
+        api_key=os.getenv("LLM_API_KEY", ""),
+        base_url=os.getenv("LLM_BASE_URL", ""),
+        model=os.getenv("LLM_MODEL", ""),
+        json_mode=os.getenv("LLM_JSON_MODE"),
+    )
     outcome = await review_pr(
         owner, name, number,
         token=token,
-        api_key=os.getenv("LLM_API_KEY", ""),
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=llm.model,
+        provider=llm.kind,
+        json_mode=llm.json_mode,
         profile=args.profile,
         api_base=os.getenv("GITHUB_API", "https://api.github.com"),
         allow_approve=allow_approve,

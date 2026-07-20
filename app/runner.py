@@ -28,6 +28,8 @@ async def review_pr(
     base_url: str,
     model: str,
     profile: str | None = None,
+    provider: str = "openai",
+    json_mode: bool = True,
     api_base: str = "https://api.github.com",
     allow_approve: bool = True,
     post: bool = True,
@@ -41,7 +43,8 @@ async def review_pr(
     client = GitHubClient(token, api_base)
     diff = await client.get_diff(owner, repo, number)
     result = await review_diff(
-        diff, api_key=api_key, base_url=base_url, model=model, profile=profile
+        diff, api_key=api_key, base_url=base_url, model=model, profile=profile,
+        provider=provider, json_mode=json_mode,
     )
 
     event = result.event

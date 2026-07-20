@@ -28,6 +28,13 @@ from .profiles import (
     is_builtin,
     load_profiles,
 )
+from .providers import (
+    DEFAULT_PROVIDER,
+    available_providers,
+    get_provider,
+    is_known,
+    resolve as resolve_llm,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
@@ -168,20 +175,47 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
     env_text = _base_env()
 
-    # 2. DeepSeek key (hidden input)
-    print(bold("\n2) Ключ DeepSeek"))
-    current = env_value(env_text, "LLM_API_KEY")
-    has_key = current not in ("", "sk-xxx")
-    new_key = ""
-    if has_key and not confirm("   Ключ уже есть в .env. Перезаписать?", default=False):
-        print("   оставляю текущий")
-    else:
-        new_key = getpass.getpass("   Введите ключ DeepSeek (ввод скрыт): ").strip()
-        while not new_key and confirm("   Пусто. Ввести снова?", default=True):
-            new_key = getpass.getpass("   Введите ключ DeepSeek (ввод скрыт): ").strip()
+    # 2. LLM provider
+    print(bold("\n2) Провайдер LLM"))
+    providers = available_providers()
+    current_provider = env_value(env_text, "LLM_PROVIDER") or DEFAULT_PROVIDER
+    for i, pname in enumerate(providers, 1):
+        p = get_provider(pname)
+        mark = " (по умолчанию)" if pname == DEFAULT_PROVIDER else ""
+        note = "" if p.needs_key else " — локально, без ключа"
+        print(f"   {i}. {pname} — {p.default_model}{note}{mark}")
+    try:
+        default_idx = providers.index(current_provider) + 1
+    except ValueError:
+        default_idx = providers.index(DEFAULT_PROVIDER) + 1
+    raw_p = ask("   Выбор", str(default_idx))
+    try:
+        provider = providers[int(raw_p) - 1]
+    except (ValueError, IndexError):
+        provider = DEFAULT_PROVIDER
+    prov = get_provider(provider)
 
-    # 3. review profile
-    print(bold("\n3) Профиль ревью"))
+    # 3. API key (hidden input) — skipped for keyless local backends
+    label = {"deepseek": "DeepSeek", "openai": "OpenAI",
+             "claude": "Anthropic (Claude)"}.get(provider, provider)
+    new_key = ""
+    if prov.needs_key:
+        print(bold(f"\n3) Ключ {label}"))
+        current = env_value(env_text, "LLM_API_KEY")
+        has_key = current not in ("", "sk-xxx")
+        if has_key and not confirm("   Ключ уже есть в .env. Перезаписать?", default=False):
+            print("   оставляю текущий")
+        else:
+            new_key = getpass.getpass(f"   Введите ключ {label} (ввод скрыт): ").strip()
+            while not new_key and confirm("   Пусто. Ввести снова?", default=True):
+                new_key = getpass.getpass(f"   Введите ключ {label} (ввод скрыт): ").strip()
+    else:
+        print(bold("\n3) Ключ"))
+        print(f"   {ok('✓')} {provider} — локальная модель, ключ не нужен. "
+              f"Endpoint: {prov.base_url}")
+
+    # 4. review profile
+    print(bold("\n4) Профиль ревью"))
     names = available_profiles()
     for i, name in enumerate(names, 1):
         mark = " (по умолчанию)" if name == DEFAULT_PROFILE else ""
@@ -193,31 +227,41 @@ def cmd_setup(_: argparse.Namespace) -> int:
         profile = DEFAULT_PROFILE
 
     # write .env
-    updates = {"REVIEW_PROFILE": profile}
+    updates = {
+        "REVIEW_PROFILE": profile,
+        "LLM_PROVIDER": provider,
+        "LLM_BASE_URL": prov.base_url,
+        "LLM_MODEL": prov.default_model,
+    }
     if new_key:
         updates["LLM_API_KEY"] = new_key
     ENV_PATH.write_text(upsert_env(env_text, updates))
     saved = ", ключ сохранён" if new_key else ""
-    print(f"   {ok('✓')} записал .env (профиль={profile}{saved})")
+    print(f"   {ok('✓')} записал .env (провайдер={provider}, профиль={profile}{saved})")
 
-    # 4. GitHub Actions
-    print(bold("\n4) GitHub Actions"))
+    # 5. GitHub Actions
+    print(bold("\n5) GitHub Actions"))
     key_for_secret = new_key or env_value(ENV_PATH.read_text(), "LLM_API_KEY")
-    if account and confirm(
+    if not prov.needs_key:
+        print(f"   {warn('!')} провайдер '{provider}' — локальная модель; "
+              "GitHub Actions не достучится до localhost. "
+              "Для авто-ревью выбери облачный провайдер.")
+    if account and prov.needs_key and confirm(
         "   Настроить авто-ревью на PR через GitHub Actions?", default=True
     ):
         repo = ask("   Репозиторий (owner/name)", gh_default_repo())
         if repo:
             if key_for_secret and key_for_secret != "sk-xxx":
-                r = _gh("secret", "set", "DEEPSEEK_API_KEY", "--repo", repo,
+                r = _gh("secret", "set", "LLM_API_KEY", "--repo", repo,
                         stdin=key_for_secret)
-                print(_step_status(r, f"секрет DEEPSEEK_API_KEY → {repo}"))
+                print(_step_status(r, f"секрет LLM_API_KEY → {repo}"))
             else:
                 print(f"   {warn('!')} ключ неизвестен — задай секрет позже: "
-                      f"gh secret set DEEPSEEK_API_KEY --repo {repo}")
-            r = _gh("variable", "set", "REVIEW_PROFILE", "--repo", repo,
-                    "--body", profile)
-            print(_step_status(r, f"variable REVIEW_PROFILE={profile}"))
+                      f"gh secret set LLM_API_KEY --repo {repo}")
+            for var, val in (("REVIEW_PROFILE", profile), ("LLM_PROVIDER", provider),
+                             ("LLM_MODEL", prov.default_model), ("LLM_BASE_URL", prov.base_url)):
+                r = _gh("variable", "set", var, "--repo", repo, "--body", val)
+                print(_step_status(r, f"variable {var}={val}"))
             mark = ok("✓") if WORKFLOW.exists() else warn("!")
             state = "на месте" if WORKFLOW.exists() else "отсутствует (см. .github/workflows/)"
             print(f"   {mark} workflow ai-review.yml {state}")
@@ -247,8 +291,20 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         print(f"   {icon} {label}{extra}")
 
     check(".env существует", ENV_PATH.exists(), "запусти: pr-reviewer setup")
-    key = env_value(env_text, "LLM_API_KEY")
-    check("ключ DeepSeek задан", key not in ("", "sk-xxx"), "pr-reviewer setup")
+    llm = resolve_llm(
+        provider=env_value(env_text, "LLM_PROVIDER") or None,
+        api_key=env_value(env_text, "LLM_API_KEY"),
+        base_url=env_value(env_text, "LLM_BASE_URL"),
+        model=env_value(env_text, "LLM_MODEL"),
+        json_mode=env_value(env_text, "LLM_JSON_MODE") or None,
+    )
+    check(f"провайдер: {llm.provider} ({llm.model})", is_known(llm.provider),
+          f"неизвестный, доступны: {', '.join(available_providers())}")
+    if llm.needs_key:
+        check("ключ LLM задан", llm.api_key not in ("", "sk-xxx"), "pr-reviewer setup")
+    else:
+        check(f"локальная модель на {llm.base_url}", True,
+              "ключ не нужен; убедись, что сервер запущен")
     profile = env_value(env_text, "REVIEW_PROFILE") or DEFAULT_PROFILE
     names = available_profiles()
     check(f"профиль ревью: {profile}", profile in names,
@@ -272,8 +328,8 @@ def _load_env_file() -> None:
     if not ENV_PATH.exists():
         return
     text = ENV_PATH.read_text()
-    for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "REVIEW_PROFILE",
-                "GITHUB_TOKEN", "GITHUB_API"):
+    for key in ("LLM_PROVIDER", "LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL",
+                "LLM_JSON_MODE", "REVIEW_PROFILE", "GITHUB_TOKEN", "GITHUB_API"):
         value = env_value(text, key)
         if value and not os.getenv(key):
             os.environ[key] = value
@@ -295,22 +351,31 @@ def cmd_review(args: argparse.Namespace) -> int:
         print(err("Нет токена GitHub. Задай GITHUB_TOKEN или выполни gh auth login."))
         return 1
 
-    api_key = os.getenv("LLM_API_KEY", "")
-    if not api_key or api_key == "sk-xxx":
-        print(err("Нет ключа DeepSeek. Запусти: pr-reviewer setup"))
+    llm = resolve_llm(
+        provider=os.getenv("LLM_PROVIDER"),
+        api_key=os.getenv("LLM_API_KEY", ""),
+        base_url=os.getenv("LLM_BASE_URL", ""),
+        model=os.getenv("LLM_MODEL", ""),
+        json_mode=os.getenv("LLM_JSON_MODE"),
+    )
+    if llm.needs_key and (not llm.api_key or llm.api_key in ("sk-xxx", "")):
+        print(err(f"Нет ключа для провайдера '{llm.provider}'. Запусти: pr-reviewer setup"))
         return 1
 
     profile = args.profile or os.getenv("REVIEW_PROFILE", DEFAULT_PROFILE)
-    print(bold(f"\n🔍 Ревью {owner}/{name}#{args.pr} (профиль: {profile})"
+    print(bold(f"\n🔍 Ревью {owner}/{name}#{args.pr} "
+               f"(провайдер: {llm.provider}/{llm.model}, профиль: {profile})"
                f"{'  [dry-run]' if args.dry_run else ''}\n"))
 
     try:
         outcome = asyncio.run(review_pr(
             owner, name, args.pr,
             token=token,
-            api_key=api_key,
-            base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
-            model=os.getenv("LLM_MODEL", "deepseek-chat"),
+            api_key=llm.api_key,
+            base_url=llm.base_url,
+            model=llm.model,
+            provider=llm.kind,
+            json_mode=llm.json_mode,
             profile=profile,
             api_base=os.getenv("GITHUB_API", "https://api.github.com"),
             allow_approve=args.approve,
@@ -495,6 +560,56 @@ def cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── provider (switch LLM backend) ─────────────────────────────────────
+def _current_provider() -> str:
+    text = ENV_PATH.read_text() if ENV_PATH.exists() else ""
+    return env_value(text, "LLM_PROVIDER") or DEFAULT_PROVIDER
+
+
+def cmd_provider(args: argparse.Namespace) -> int:
+    current = _current_provider()
+
+    # No name → list what's available and which is active.
+    if not args.name:
+        print(bold("\nПровайдеры LLM:\n"))
+        for name in available_providers():
+            p = get_provider(name)
+            status = ok("● активен") if name == current else "○"
+            key = "" if p.needs_key else "  (без ключа)"
+            print(f"   {name:<10}{p.kind:<11}{p.default_model:<18} {status}{key}")
+            print(f"   {'':<10}{p.base_url}")
+        print(f"\nПереключить: {bold('pr-reviewer provider <имя>')}"
+              f"  [--model M] [--base-url URL]")
+        print("Ключ задаётся отдельно: pr-reviewer setup (или LLM_API_KEY в .env)\n")
+        return 0
+
+    name = args.name.lower()
+    if not is_known(name):
+        print(err(f"Неизвестный провайдер '{name}'. "
+                  f"Доступны: {', '.join(available_providers())}"))
+        return 1
+
+    p = get_provider(name)
+    updates = {
+        "LLM_PROVIDER": name,
+        "LLM_BASE_URL": args.base_url or p.base_url,
+        "LLM_MODEL": args.model or p.default_model,
+    }
+    base = ENV_PATH.read_text() if ENV_PATH.exists() else _base_env()
+    ENV_PATH.write_text(upsert_env(base, updates))
+    print(f"{ok('✓')} провайдер → {bold(name)} "
+          f"({updates['LLM_MODEL']} @ {updates['LLM_BASE_URL']})")
+    if p.needs_key:
+        key = env_value(ENV_PATH.read_text(), "LLM_API_KEY")
+        if not key or key == "sk-xxx":
+            print(f"   {warn('!')} ключ не задан — впиши LLM_API_KEY или запусти "
+                  f"{bold('pr-reviewer setup')}")
+    else:
+        print(f"   {ok('✓')} ключ не нужен (локальная модель). "
+              f"Проверь, что сервер запущен на {updates['LLM_BASE_URL']}")
+    return 0
+
+
 # ── serve ─────────────────────────────────────────────────────────────
 def cmd_serve(args: argparse.Namespace) -> int:
     cmd = [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(args.port)]
@@ -533,6 +648,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile.add_argument("--repo", default="", help="owner/name для синхронизации repo variable")
     p_profile.add_argument("--sync", action="store_true", help="без вопроса обновить repo variable")
 
+    p_provider = sub.add_parser("provider", help="показать/переключить LLM-провайдера (DeepSeek/OpenAI/Claude/локально)")
+    p_provider.add_argument("name", nargs="?", default="", help="deepseek | openai | claude | local")
+    p_provider.add_argument("--model", default="", help="переопределить модель")
+    p_provider.add_argument("--base-url", dest="base_url", default="", help="переопределить endpoint (для local/self-hosted)")
+
     p_serve = sub.add_parser("serve", help="запустить webhook-сервис локально")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="автоперезагрузка (dev)")
@@ -544,8 +664,8 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS_HELP = """\
 🤖 Android PR Reviewer — команды
 
-  setup                 интерактивная настройка: ключ DeepSeek (скрытый ввод),
-                        профиль ревью и, при желании, GitHub Actions
+  setup                 интерактивная настройка: провайдер LLM, ключ (скрытый
+                        ввод), профиль ревью и, при желании, GitHub Actions
   doctor                проверить, что всё настроено (ключ, профиль, gh, workflow)
   review --pr N         разовое ревью pull request прямо из терминала
                           --repo owner/name   репозиторий (по умолчанию текущий)
@@ -560,16 +680,21 @@ COMMANDS_HELP = """\
                           --show NAME           показать focus профиля
                           --edit NAME           править свой профиль ($EDITOR / --focus / --from)
                           --remove NAME         удалить свой профиль
+  provider [имя]        показать или переключить LLM-провайдера
+                          deepseek | openai | claude | local
+                          --model M             переопределить модель
+                          --base-url URL        endpoint (для local/self-hosted)
   serve [--port --reload]   запустить webhook-сервис локально
   help                  этот экран
 
 Примеры:
   pr-reviewer setup
-  pr-reviewer profile              # список и активный
+  pr-reviewer provider             # список провайдеров и активный
+  pr-reviewer provider claude      # переключить на Claude API
+  pr-reviewer provider local       # локальная модель (Ollama и т.п.)
   pr-reviewer profile compose      # переключить на Jetpack Compose
   pr-reviewer profile --add security --from security.md   # свой профиль
   pr-reviewer review --pr 1 --dry-run
-  pr-reviewer review --repo Sermage/pr-reviewer --pr 1
 """
 
 
@@ -586,6 +711,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": cmd_doctor,
         "review": cmd_review,
         "profile": cmd_profile,
+        "provider": cmd_provider,
         "serve": cmd_serve,
         "help": cmd_help,
     }

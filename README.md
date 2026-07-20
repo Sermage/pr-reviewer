@@ -1,9 +1,13 @@
 # Android PR Reviewer
 
 AI-сервис код-ревью для **Android** pull request'ов. Слушает GitHub webhook,
-берёт diff PR, прогоняет его через LLM (DeepSeek) с Android-заточенным промптом
+берёт diff PR, прогоняет его через LLM с Android-заточенным промптом
 и постит обратно **review с вердиктом** — `APPROVE` / `REQUEST_CHANGES` / `COMMENT` —
 с **inline-комментариями на конкретных строках** diff (см. ниже).
+
+LLM-провайдер **переключаемый**: из коробки `deepseek`, `openai`, `claude`
+и `local` (локальная модель через Ollama/LM Studio/vLLM) —
+командой `pr-reviewer provider <имя>` (см. ниже).
 
 Ревью-фокус вынесен в **профили**: из коробки `android`, `compose` и `kmp`,
 переключаются командой `pr-reviewer profile <имя>` (или env `REVIEW_PROFILE`).
@@ -32,13 +36,15 @@ pr-reviewer setup
 
 Визард по шагам:
 1. **Окружение** — проверяет Python и авторизацию `gh`.
-2. **Ключ DeepSeek** — вводится **скрыто** (как пароль, символы не видны; в `gh`
+2. **Провайдер LLM** — выбор `deepseek` / `openai` / `claude` / `local`.
+3. **Ключ** — вводится **скрыто** (как пароль, символы не видны; в `gh`
    передаётся через stdin, а не в командной строке) и сохраняется в `.env`.
-3. **Профиль ревью** — выбор `android` / `kmp` (список берётся из `app/profiles.py`).
-4. **GitHub Actions** — если `gh` авторизован, сам предлагает настроить авто-ревью:
-   ставит секрет `DEEPSEEK_API_KEY`, variable `REVIEW_PROFILE`, проверяет workflow.
-   А если `gh` установлен, но не авторизован — визард предложит `gh auth login`
-   прямо в процессе.
+   Для `local` шаг пропускается — ключ не нужен.
+4. **Профиль ревью** — выбор `android` / `compose` / `kmp` / свой.
+5. **GitHub Actions** — если `gh` авторизован, сам предлагает настроить авто-ревью:
+   ставит секрет `LLM_API_KEY`, variables `REVIEW_PROFILE`/`LLM_PROVIDER`/`LLM_MODEL`,
+   проверяет workflow. А если `gh` установлен, но не авторизован — визард предложит
+   `gh auth login` прямо в процессе.
 
 Другие команды:
 
@@ -66,6 +72,7 @@ app/
   reviewer.py      # ядро: diff → LLM → verdict + inline-комменты + markdown
   diff_index.py    # парсер diff → валидные строки-«якоря» для inline-комментов
   profiles.py      # профили ревью (built-in) + загрузка своих из profiles.d/
+  providers.py     # LLM-провайдеры: deepseek/openai/claude/local (2 протокола)
   config.py        # чтение env
 profiles.d/        # свои профили: <имя>.md = инструкция «что проверять»
 scripts/demo_local.py  # прогон на локальном .diff без GitHub (для демо)
@@ -126,6 +133,52 @@ pytest
 - **Дальше:** GitHub App (JWT → installation token) — ставится на любой репозиторий,
   свой бот-аватар. `github_client.py` изолирует работу с API, так что миграция
   затрагивает только слой аутентификации.
+
+## Провайдеры LLM
+
+Ревьюер общается с моделью по одному из двух протоколов, а конкретный бэкенд —
+это **пресет** (протокол + `base_url` + модель по умолчанию):
+
+| Провайдер | Протокол | Endpoint по умолчанию | Модель | Ключ |
+|---|---|---|---|---|
+| `deepseek` | OpenAI-совместимый | `https://api.deepseek.com` | `deepseek-chat` | нужен |
+| `openai` | OpenAI-совместимый | `https://api.openai.com/v1` | `gpt-4o-mini` | нужен |
+| `claude` | Anthropic | `https://api.anthropic.com` | `claude-sonnet-5` | нужен |
+| `local` | OpenAI-совместимый | `http://localhost:11434/v1` | `qwen2.5-coder` | не нужен |
+
+Переключение — из терминала:
+
+```bash
+pr-reviewer provider                 # список + активный
+pr-reviewer provider claude          # Claude API
+pr-reviewer provider openai --model gpt-4o
+pr-reviewer provider local           # локальная модель (Ollama по умолчанию)
+pr-reviewer provider local --base-url http://localhost:1234/v1  # LM Studio
+```
+
+Команда пишет `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` в `.env`. Ключ
+задаётся отдельно (`pr-reviewer setup` или `LLM_API_KEY` в `.env`); для `local`
+ключ не требуется. `setup` тоже спрашивает провайдера первым шагом.
+
+Под капотом всего два протокола: **OpenAI-совместимый** `/chat/completions`
+(DeepSeek, OpenAI и любые локальные серверы — Ollama, LM Studio, vLLM) и
+**Anthropic** `/v1/messages` (Claude). Добавить ещё один OpenAI-совместимый
+сервис — это просто новый пресет или `provider local --base-url <url>`, кода
+трогать не нужно. Ответ модели парсится устойчиво: строгий JSON-режим там, где
+он есть (`response_format`), и снятие ```json-обёртки для остальных.
+
+**Локальная модель (пример, Ollama):**
+
+```bash
+ollama pull qwen2.5-coder
+pr-reviewer provider local
+pr-reviewer review --pr 1 --dry-run   # ключ не нужен, всё локально
+```
+
+**В GitHub Actions** провайдер задаётся repo variables (`LLM_PROVIDER`,
+`LLM_MODEL`, `LLM_BASE_URL`), а ключ — секретом `LLM_API_KEY`
+(старый `DEEPSEEK_API_KEY` поддерживается как fallback). `local`, разумеется, в
+Actions не работает — runner не достучится до `localhost`.
 
 ## Профили ревью (точка расширения)
 
@@ -211,6 +264,6 @@ inline       в тело ревью
 
 ## Статус
 
-MVP. Ключи GitHub/DeepSeek подставляются через `.env`; без них работает демо-режим
+MVP. Ключи GitHub/LLM подставляются через `.env`; без них работает демо-режим
 на моках (`pytest`, `demo_local.py` с фейковым ключом упадёт только на реальном
 вызове LLM — сам конвейер и выбор профиля проверяются офлайн).

@@ -25,8 +25,11 @@ jobs:
       - name: Run Android PR Reviewer
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          LLM_BASE_URL: https://api.deepseek.com
-          LLM_MODEL: deepseek-chat
+          # New setups store the key as LLM_API_KEY; DEEPSEEK_API_KEY kept as fallback.
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY || secrets.DEEPSEEK_API_KEY }}
+          # Provider preset (deepseek|openai|claude). Overrides below are optional.
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'deepseek' }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
           REVIEW_PROFILE: ${{ vars.REVIEW_PROFILE || 'android' }}
         run: python scripts/review_pr.py

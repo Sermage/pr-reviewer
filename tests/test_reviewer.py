@@ -3,7 +3,7 @@ from app.profiles import get_profile
 from app.reviewer import review_diff
 
 
-async def _fake_llm(diff, *, system_prompt, api_key, base_url, model):
+async def _fake_llm(diff, *, system_prompt, api_key, base_url, model, **_):
     # Assert the selected profile's prompt actually reaches the LLM layer.
     _fake_llm.seen_prompt = system_prompt
     return {
@@ -64,7 +64,7 @@ _DIFF = (
 
 
 async def test_valid_line_becomes_inline_comment(monkeypatch):
-    async def _llm(diff, *, system_prompt, api_key, base_url, model):
+    async def _llm(diff, *, system_prompt, api_key, base_url, model, **_):
         return {
             "verdict": "request_changes",
             "summary": "s",
