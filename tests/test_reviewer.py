@@ -51,3 +51,36 @@ async def test_kmp_profile_selected(monkeypatch):
 
 def test_unknown_profile_falls_back_to_android():
     assert get_profile("does-not-exist").name == "android"
+
+
+_DIFF = (
+    "diff --git a/app/Main.kt b/app/Main.kt\n"
+    "--- a/app/Main.kt\n"
+    "+++ b/app/Main.kt\n"
+    "@@ -10,1 +10,2 @@\n"
+    "     val a = 1\n"
+    "+    GlobalScope.launch { }\n"
+)
+
+
+async def test_valid_line_becomes_inline_comment(monkeypatch):
+    async def _llm(diff, *, system_prompt, api_key, base_url, model):
+        return {
+            "verdict": "request_changes",
+            "summary": "s",
+            "issues": [
+                # line 11 is the added GlobalScope line -> valid anchor
+                {"file": "app/Main.kt", "line": 11, "severity": "high", "note": "GlobalScope"},
+                # line 999 does not exist -> falls back to body
+                {"file": "app/Main.kt", "line": 999, "severity": "low", "note": "ghost"},
+            ],
+        }
+
+    monkeypatch.setattr(reviewer, "_call_llm", _llm)
+    result = await review_diff(_DIFF, api_key="k", base_url="u", model="m")
+
+    assert len(result.comments) == 1
+    c = result.comments[0]
+    assert c == {"path": "app/Main.kt", "line": 11, "side": "RIGHT", "body": "🔴 GlobalScope"}
+    # the invalid-line issue is not lost — it lands in the body
+    assert "ghost" in result.body

@@ -28,15 +28,29 @@ class GitHubClient:
             return resp.text
 
     async def post_review(
-        self, owner: str, repo: str, number: int, event: str, body: str
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        event: str,
+        body: str,
+        comments: list[dict] | None = None,
     ) -> dict:
         """Submit a PR review.
 
         `event` is one of APPROVE, REQUEST_CHANGES, COMMENT.
+        `comments` are inline review comments: {path, line, side, body}.
         """
         url = f"{self._api}/repos/{owner}/{repo}/pulls/{number}/reviews"
-        payload = {"event": event, "body": body}
+        payload: dict = {"event": event, "body": body}
+        if comments:
+            payload["comments"] = comments
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(url, headers=self._headers(), json=payload)
+            if resp.status_code == 422 and comments:
+                # An inline anchor GitHub disagrees with fails the whole review.
+                # Don't lose the review — retry with the body only.
+                fallback = {"event": event, "body": body}
+                resp = await client.post(url, headers=self._headers(), json=fallback)
             resp.raise_for_status()
             return resp.json()

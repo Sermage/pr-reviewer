@@ -9,11 +9,14 @@ so this module stays domain-agnostic — switch android → kmp without touching
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
+from .diff_index import commentable_lines
 from .profiles import Profile, get_profile
+
+_SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵"}
 
 # Map the model's verdict onto GitHub's review `event` values.
 _VERDICT_TO_EVENT = {
@@ -31,6 +34,7 @@ class ReviewResult:
     event: str          # APPROVE | REQUEST_CHANGES | COMMENT
     body: str           # markdown, ready to post
     verdict: str        # raw verdict from the model
+    comments: list[dict] = field(default_factory=list)  # inline review comments
 
 
 def _truncate(diff: str) -> str:
@@ -61,22 +65,56 @@ async def _call_llm(
     return json.loads(content)
 
 
-def _render_body(parsed: dict, profile_name: str) -> str:
+def _split_issues(
+    issues: list[dict], diff: str
+) -> tuple[list[dict], list[dict]]:
+    """Split issues into (inline comments, leftover issues).
+
+    An issue becomes an inline comment only if its (file, line) points at a
+    line that actually exists on the RIGHT side of the diff — otherwise GitHub
+    would reject the whole review. Everything else stays in the body.
+    """
+    anchors = commentable_lines(diff)
+    inline: list[dict] = []
+    leftover: list[dict] = []
+    for it in issues:
+        file = it.get("file")
+        line = it.get("line")
+        note = (it.get("note") or "").strip()
+        sev = it.get("severity", "low")
+        if file in anchors and isinstance(line, int) and line in anchors[file]:
+            inline.append(
+                {
+                    "path": file,
+                    "line": line,
+                    "side": "RIGHT",
+                    "body": f"{_SEVERITY_EMOJI.get(sev, '🔵')} {note}",
+                }
+            )
+        else:
+            leftover.append(it)
+    return inline, leftover
+
+
+def _render_body(
+    parsed: dict, profile_name: str, leftover: list[dict], inline_count: int
+) -> str:
     summary = parsed.get("summary", "").strip() or "Автоматическое ревью выполнено."
-    issues = parsed.get("issues") or []
     title = {"android": "Android", "kmp": "Kotlin Multiplatform"}.get(
         profile_name, profile_name
     )
     lines = [f"## 🤖 AI-ревью ({title})", "", summary, ""]
-    if issues:
-        lines.append("### Замечания")
-        emoji = {"high": "🔴", "medium": "🟡", "low": "🔵"}
-        for it in issues:
+    if inline_count:
+        lines.append(f"💬 {inline_count} замечани{'е' if inline_count == 1 else 'я/й'} оставлено прямо в коде.")
+        lines.append("")
+    if leftover:
+        lines.append("### Прочие замечания")
+        for it in leftover:
             sev = it.get("severity", "low")
             file = it.get("file", "?")
-            note = it.get("note", "").strip()
-            lines.append(f"- {emoji.get(sev, '🔵')} **`{file}`** — {note}")
-    else:
+            note = (it.get("note") or "").strip()
+            lines.append(f"- {_SEVERITY_EMOJI.get(sev, '🔵')} **`{file}`** — {note}")
+    elif not inline_count:
         lines.append("Серьёзных проблем не найдено. 👍")
     lines += ["", "> Сгенерировано автоматически Android PR Reviewer. Это подсказка, а не замена ревью человеком."]
     return "\n".join(lines)
@@ -109,4 +147,6 @@ async def review_diff(
     )
     verdict = str(parsed.get("verdict", "comment")).lower()
     event = _VERDICT_TO_EVENT.get(verdict, "COMMENT")
-    return ReviewResult(event=event, body=_render_body(parsed, prof.name), verdict=verdict)
+    inline, leftover = _split_issues(parsed.get("issues") or [], diff)
+    body = _render_body(parsed, prof.name, leftover, len(inline))
+    return ReviewResult(event=event, body=body, verdict=verdict, comments=inline)

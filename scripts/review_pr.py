@@ -73,8 +73,11 @@ async def main() -> int:
     if event == "APPROVE" and os.getenv("GITHUB_ACTIONS") == "true":
         event = "COMMENT"
 
-    await client.post_review(owner, name, number, event, result.body)
-    print(f"Posted {event} review on {owner}/{name}#{number} (verdict={result.verdict})")
+    await client.post_review(owner, name, number, event, result.body, result.comments)
+    print(
+        f"Posted {event} review on {owner}/{name}#{number} "
+        f"(verdict={result.verdict}, inline={len(result.comments)})"
+    )
     return 0
 
 

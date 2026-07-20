@@ -45,7 +45,9 @@ async def run_review(owner: str, repo: str, number: int) -> None:
         )
         log.info("Review for %s/%s#%s -> %s", owner, repo, number, result.event)
         if settings.post_reviews:
-            await client.post_review(owner, repo, number, result.event, result.body)
+            await client.post_review(
+                owner, repo, number, result.event, result.body, result.comments
+            )
         else:
             log.info("POST_REVIEWS=false, dry-run body:\n%s", result.body)
     except Exception:  # noqa: BLE001 — background task must not crash silently
