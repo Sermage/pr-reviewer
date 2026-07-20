@@ -43,6 +43,11 @@ ENV_PATH = paths.env_path()          # repo/.env in a checkout, else ~/.pr-revie
 ENV_EXAMPLE = paths.env_example_path()
 WORKFLOW = paths.workflow_path()
 
+# How the user actually invokes us. In a checkout there is no global command —
+# only the ./pr-reviewer launcher — so hints must carry the ./ prefix. After
+# pipx install the command is on PATH globally.
+CMD = "./pr-reviewer" if paths.is_source_checkout() else "pr-reviewer"
+
 
 def _write_env(text: str) -> None:
     """Write .env, creating its directory (needed for the ~/.pr-reviewer case)."""
@@ -283,13 +288,13 @@ def cmd_setup(_: argparse.Namespace) -> int:
             print(f"   {warn('!')} репозиторий не указан — пропускаю")
     elif not account:
         print("   Пропущено (нужен авторизованный gh). "
-              "Позже: gh auth login, затем pr-reviewer setup")
+              f"Позже: gh auth login, затем {CMD} setup")
 
     # summary
     print(bold("\n✅ Готово. Дальше:"))
-    print("   pr-reviewer doctor      # проверить настройку")
-    print("   pr-reviewer serve       # локальный webhook-сервис")
-    print("   pr-reviewer serve и туннель (ngrok/smee) — см. README")
+    print(f"   {CMD} doctor      # проверить настройку")
+    print(f"   {CMD} serve       # локальный webhook-сервис")
+    print(f"   {CMD} serve и туннель (ngrok/smee) — см. README")
     return 0
 
 
@@ -305,7 +310,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         extra = "" if good else f"  → {hint}"
         print(f"   {icon} {label}{extra}")
 
-    check(".env существует", ENV_PATH.exists(), "запусти: pr-reviewer setup")
+    check(".env существует", ENV_PATH.exists(), f"запусти: {CMD} setup")
     llm = resolve_llm(
         provider=env_value(env_text, "LLM_PROVIDER") or None,
         api_key=env_value(env_text, "LLM_API_KEY"),
@@ -316,7 +321,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     check(f"провайдер: {llm.provider} ({llm.model})", is_known(llm.provider),
           f"неизвестный, доступны: {', '.join(available_providers())}")
     if llm.needs_key:
-        check("ключ LLM задан", llm.api_key not in ("", "sk-xxx"), "pr-reviewer setup")
+        check("ключ LLM задан", llm.api_key not in ("", "sk-xxx"), f"{CMD} setup")
     else:
         check(f"локальная модель на {llm.base_url}", True,
               "ключ не нужен; убедись, что сервер запущен")
@@ -375,7 +380,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         json_mode=os.getenv("LLM_JSON_MODE"),
     )
     if llm.needs_key and (not llm.api_key or llm.api_key in ("sk-xxx", "")):
-        print(err(f"Нет ключа для провайдера '{llm.provider}'. Запусти: pr-reviewer setup"))
+        print(err(f"Нет ключа для провайдера '{llm.provider}'. Запусти: {CMD} setup"))
         return 1
 
     profile = args.profile or os.getenv("REVIEW_PROFILE", DEFAULT_PROFILE)
@@ -441,7 +446,7 @@ def _add_profile(args: argparse.Namespace) -> int:
             f"   Профиль '{name}' уже есть. Перезаписать?", default=False
         ):
             print("   отменено — для правки: "
-                  f"{bold(f'pr-reviewer profile --edit {name}')}")
+                  f"{bold(f'{CMD} profile --edit {name}')}")
             return 0
         print(warn(f"   ⚠ перезаписываю существующий '{name}'"))
     focus = _read_focus(args)
@@ -451,7 +456,7 @@ def _add_profile(args: argparse.Namespace) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(focus + "\n")
     print(f"{ok('✓')} профиль {bold(name)} создан → {path}")
-    print(f"   активировать: {bold(f'pr-reviewer profile {name}')}")
+    print(f"   активировать: {bold(f'{CMD} profile {name}')}")
     return 0
 
 
@@ -479,7 +484,7 @@ def _edit_profile(args: argparse.Namespace) -> int:
 
     if not path.exists():
         print(err(f"Свой профиль '{name}' не найден. Создай: "
-                  f"pr-reviewer profile --add {name}"))
+                  f"{CMD} profile --add {name}"))
         return 1
 
     # Interactive: open in $EDITOR when we have one and a real terminal.
@@ -552,8 +557,8 @@ def cmd_profile(args: argparse.Namespace) -> int:
         auto_status = ok("● активен") if current == AUTO_PROFILE else "○"
         print(f"   {AUTO_PROFILE:<12}{'оркестратор':<14} {auto_status}  "
               "← сам определит направление(я) PR и запустит нужные профили")
-        print(f"\nПереключить: {bold('pr-reviewer profile <имя>')}")
-        print(f"Добавить свой: {bold('pr-reviewer profile --add <имя> --from focus.md')}\n")
+        print(f"\nПереключить: {bold(f'{CMD} profile <имя>')}")
+        print(f"Добавить свой: {bold(f'{CMD} profile --add <имя> --from focus.md')}\n")
         return 0
 
     name = args.name.lower()
@@ -601,9 +606,9 @@ def cmd_provider(args: argparse.Namespace) -> int:
             key = "" if p.needs_key else "  (без ключа)"
             print(f"   {name:<10}{p.kind:<11}{p.default_model:<18} {status}{key}")
             print(f"   {'':<10}{p.base_url}")
-        print(f"\nПереключить: {bold('pr-reviewer provider <имя>')}"
+        print(f"\nПереключить: {bold(f'{CMD} provider <имя>')}"
               f"  [--model M] [--base-url URL]")
-        print("Ключ задаётся отдельно: pr-reviewer setup (или LLM_API_KEY в .env)\n")
+        print(f"Ключ задаётся отдельно: {CMD} setup (или LLM_API_KEY в .env)\n")
         return 0
 
     name = args.name.lower()
@@ -626,7 +631,7 @@ def cmd_provider(args: argparse.Namespace) -> int:
         key = env_value(ENV_PATH.read_text(), "LLM_API_KEY")
         if not key or key == "sk-xxx":
             print(f"   {warn('!')} ключ не задан — впиши LLM_API_KEY или запусти "
-                  f"{bold('pr-reviewer setup')}")
+                  f"{bold(f'{CMD} setup')}")
     else:
         print(f"   {ok('✓')} ключ не нужен (локальная модель). "
               f"Проверь, что сервер запущен на {updates['LLM_BASE_URL']}")
@@ -726,7 +731,10 @@ COMMANDS_HELP = """\
 
 
 def cmd_help(_: argparse.Namespace) -> int:
-    print(COMMANDS_HELP)
+    # In a checkout the command is ./pr-reviewer (launcher), not a global name.
+    text = COMMANDS_HELP if CMD == "pr-reviewer" else COMMANDS_HELP.replace(
+        "pr-reviewer ", f"{CMD} ")
+    print(text)
     return 0
 
 
