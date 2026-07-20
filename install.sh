@@ -19,7 +19,7 @@ echo "✓ установлено"
 # ./pr-reviewer (committed launcher) runs the CLI without activating the venv.
 if [ -t 0 ] && [ -t 1 ]; then
   echo
-  read -r -p "Запустить настройку сейчас (pr-reviewer setup)? [Y/n] " ans
+  read -r -p "Запустить настройку сейчас (./pr-reviewer setup)? [Y/n] " ans
   case "${ans:-Y}" in
     [Nn]*) echo "Позже: ./pr-reviewer setup" ;;
     *) exec .venv/bin/pr-reviewer setup ;;
