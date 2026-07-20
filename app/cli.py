@@ -4,6 +4,7 @@ Commands:
     pr-reviewer setup     interactive wizard: API key (hidden), profile, GitHub Actions
     pr-reviewer doctor     check that everything is configured
     pr-reviewer serve      run the webhook service locally
+    pr-reviewer install-workflow   commit the auto-review GitHub Actions workflow to a repo
     pr-reviewer update     pull the latest version and reinstall (or pipx upgrade)
     pr-reviewer uninstall  remove the symlink and config (points to .venv/pipx removal)
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import getpass
 import os
 import shutil
@@ -49,6 +51,53 @@ WORKFLOW = paths.workflow_path()
 # only the ./pr-reviewer launcher — so hints must carry the ./ prefix. After
 # pipx install the command is on PATH globally.
 CMD = "./pr-reviewer" if paths.is_source_checkout() else "pr-reviewer"
+
+# Where this tool is installed from — used by the CI workflow (pip install) and
+# by `update` (pipx). Single source of truth.
+REPO_HTTPS = "https://github.com/Sermage/pr-reviewer"
+REPO_URL = f"git+{REPO_HTTPS}"
+WORKFLOW_REL = ".github/workflows/ai-review.yml"
+
+# Self-contained workflow for a *target* repo (e.g. an Android app): that repo
+# has no reviewer code, so the job installs pr-reviewer from git and calls it.
+EXTERNAL_WORKFLOW = f"""\
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# GITHUB_TOKEN needs write access to post the review.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # This repo has no reviewer code of its own — install it from git.
+      - name: Install AI PR Reviewer
+        run: pip install "{REPO_URL}"
+
+      - name: Review pull request
+        env:
+          GITHUB_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
+          # Setup stores the key as LLM_API_KEY; DEEPSEEK_API_KEY kept as fallback.
+          LLM_API_KEY: ${{{{ secrets.LLM_API_KEY || secrets.DEEPSEEK_API_KEY }}}}
+          LLM_PROVIDER: ${{{{ vars.LLM_PROVIDER || 'deepseek' }}}}
+          LLM_BASE_URL: ${{{{ vars.LLM_BASE_URL }}}}
+          LLM_MODEL: ${{{{ vars.LLM_MODEL }}}}
+          REVIEW_PROFILE: ${{{{ vars.REVIEW_PROFILE || 'android' }}}}
+        run: >-
+          pr-reviewer review
+          --repo "${{{{ github.repository }}}}"
+          --pr "${{{{ github.event.pull_request.number }}}}"
+"""
 
 
 def _write_env(text: str) -> None:
@@ -161,6 +210,31 @@ def _step_status(r: subprocess.CompletedProcess, label: str) -> str:
         return f"   {ok('✓')} {label}"
     tail = (r.stderr or "").strip().splitlines()
     return f"   {err('✗')} {label} — {tail[-1] if tail else 'ошибка'}"
+
+
+def _install_workflow(repo: str) -> subprocess.CompletedProcess:
+    """Commit the self-contained review workflow to `repo`'s default branch.
+
+    Works on any target repo via the GitHub contents API (no local checkout).
+    Creates the file, or updates it in place if it already exists.
+    """
+    branch = _gh("api", f"repos/{repo}", "-q", ".default_branch")
+    if branch.returncode != 0:
+        return branch
+    ref = branch.stdout.strip()
+    content = base64.b64encode(EXTERNAL_WORKFLOW.encode()).decode()
+    args = [
+        "api", "--method", "PUT", f"repos/{repo}/contents/{WORKFLOW_REL}",
+        "-f", "message=ci: авто-ревью PR через AI PR Reviewer",
+        "-f", f"branch={ref}",
+        "-f", f"content={content}",
+    ]
+    # If the file already exists, the API requires its blob sha to update.
+    existing = _gh("api", f"repos/{repo}/contents/{WORKFLOW_REL}",
+                   "-q", ".sha", "-X", "GET", "-f", f"ref={ref}")
+    if existing.returncode == 0 and existing.stdout.strip():
+        args += ["-f", f"sha={existing.stdout.strip()}"]
+    return _gh(*args)
 
 
 # ── setup wizard ──────────────────────────────────────────────────────
@@ -282,10 +356,21 @@ def cmd_setup(_: argparse.Namespace) -> int:
                              ("LLM_MODEL", prov.default_model), ("LLM_BASE_URL", prov.base_url)):
                 r = _gh("variable", "set", var, "--repo", repo, "--body", val)
                 print(_step_status(r, f"variable {var}={val}"))
-            mark = ok("✓") if WORKFLOW.exists() else warn("!")
-            state = "на месте" if WORKFLOW.exists() else "отсутствует (см. .github/workflows/)"
-            print(f"   {mark} workflow ai-review.yml {state}")
-            print(ok("   Готово — открой PR, ревью запустится автоматически."))
+            # The workflow file must live in the *target* repo, on its default
+            # branch, or nothing runs. Commit it there via the API.
+            if confirm("   Добавить workflow ai-review.yml в репозиторий?", default=True):
+                r = _install_workflow(repo)
+                print(_step_status(r, f"workflow {WORKFLOW_REL} → {repo}"))
+                if r.returncode == 0:
+                    print(ok("   Готово — открой PR, ревью запустится автоматически."))
+                else:
+                    print(f"   {warn('!')} не удалось закоммитить workflow "
+                          "(ветка защищена?). Добавь файл вручную — "
+                          f"{bold(f'{CMD} install-workflow --repo {repo}')} "
+                          "покажет команду.")
+            else:
+                print(f"   {warn('!')} без workflow авто-ревью не запустится. "
+                      f"Позже: {bold(f'{CMD} install-workflow --repo {repo}')}")
         else:
             print(f"   {warn('!')} репозиторий не указан — пропускаю")
     elif not account:
@@ -650,9 +735,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 # ── update ────────────────────────────────────────────────────────────
-REPO_URL = "git+https://github.com/Sermage/pr-reviewer"
-
-
 def _symlink_into_install() -> Path | None:
     """~/.local/bin/pr-reviewer if it's a symlink pointing into our install."""
     link = Path.home() / ".local" / "bin" / "pr-reviewer"
@@ -734,6 +816,30 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── install-workflow ──────────────────────────────────────────────────
+def cmd_install_workflow(args: argparse.Namespace) -> int:
+    print(bold("\n⚙️  GitHub Actions — workflow авто-ревью\n"))
+    if getattr(args, "print", False) or not gh_available():
+        if not gh_available():
+            print(f"   {warn('!')} gh не найден. Скопируй в {WORKFLOW_REL} "
+                  "целевого репозитория:\n")
+        print(EXTERNAL_WORKFLOW)
+        return 0
+    repo = args.repo or gh_default_repo()
+    if "/" not in repo:
+        print(err("Не удалось определить репозиторий. Укажи --repo owner/name."))
+        return 1
+    r = _install_workflow(repo)
+    print(_step_status(r, f"workflow {WORKFLOW_REL} → {repo}"))
+    if r.returncode == 0:
+        print(ok("   Готово — открой PR, ревью запустится автоматически."))
+        return 0
+    print(f"   {warn('!')} не удалось закоммитить (ветка защищена?). "
+          f"Добавь вручную в {WORKFLOW_REL}:\n")
+    print(EXTERNAL_WORKFLOW)
+    return 1
+
+
 # ── entrypoint ────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -772,6 +878,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="автоперезагрузка (dev)")
 
+    p_wf = sub.add_parser("install-workflow", help="добавить GitHub Actions workflow авто-ревью в репозиторий")
+    p_wf.add_argument("--repo", default="", help="owner/name (по умолчанию — текущий)")
+    p_wf.add_argument("--print", action="store_true", help="только показать YAML, не коммитить")
+
     sub.add_parser("update", help="обновить сервис (git pull + переустановка или pipx upgrade)")
 
     p_uninstall = sub.add_parser("uninstall", help="удалить сервис (симлинк, конфиг; подскажет про .venv/pipx)")
@@ -808,6 +918,9 @@ COMMANDS_HELP = """\
                           --model M             переопределить модель
                           --base-url URL        endpoint (для local/self-hosted)
   serve [--port --reload]   запустить webhook-сервис локально
+  install-workflow      добавить GitHub Actions workflow авто-ревью в репозиторий
+                          --repo owner/name   целевой репозиторий (по умолч. текущий)
+                          --print             показать YAML, не коммитить
   update                обновить сервис (git pull + переустановка или pipx upgrade)
   uninstall [-y]        удалить сервис: симлинк и конфиг (подскажет про .venv/pipx)
   help                  этот экран
@@ -844,6 +957,7 @@ def main(argv: list[str] | None = None) -> int:
         "profile": cmd_profile,
         "provider": cmd_provider,
         "serve": cmd_serve,
+        "install-workflow": cmd_install_workflow,
         "update": cmd_update,
         "uninstall": cmd_uninstall,
         "help": cmd_help,
