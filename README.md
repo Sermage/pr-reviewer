@@ -26,26 +26,28 @@ Actions**, разовое ревью **из терминала** и как **web
 ```bash
 git clone https://github.com/Sermage/pr-reviewer
 cd pr-reviewer
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+./install.sh
 ```
+
+`install.sh` создаёт локальное окружение, ставит зависимости и сразу предлагает
+настройку. Дальше всё запускается лаунчером **`./pr-reviewer <команда>`** —
+venv активировать не нужно. (Хочешь команды без `./` — один раз `source
+.venv/bin/activate`, тогда просто `pr-reviewer`.)
 
 ## Быстрый старт
 
-Одна команда — дальше мастер проведёт по шагам (окружение → провайдер LLM →
-ключ (вводится скрыто) → профиль → GitHub Actions):
+Мастер проведёт по шагам: окружение → провайдер LLM → ключ (вводится скрыто) →
+профиль → GitHub Actions.
 
 ```bash
-pr-reviewer setup
-```
-
-Проверить, что всё на месте:
-
-```bash
-pr-reviewer doctor
+./pr-reviewer setup    # интерактивная настройка
+./pr-reviewer doctor   # проверить, что всё на месте
 ```
 
 ## Использование
+
+> Команды показаны как `pr-reviewer` — если не активировал venv, добавляй `./`:
+> `./pr-reviewer <команда>`.
 
 ```bash
 pr-reviewer setup                     # интерактивная настройка

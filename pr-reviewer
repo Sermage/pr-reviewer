@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Thin launcher: run the CLI from .venv without activating it.
+# Usage: ./pr-reviewer <command>   (e.g. ./pr-reviewer setup)
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN="$DIR/.venv/bin/pr-reviewer"
+if [ ! -x "$BIN" ]; then
+  echo "Не установлено. Сначала запусти: ./install.sh" >&2
+  exit 1
+fi
+exec "$BIN" "$@"
