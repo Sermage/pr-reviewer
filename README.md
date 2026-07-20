@@ -184,21 +184,52 @@ pr-reviewer uninstall-workflow --repo owner/name
 Вручную нужны: секрет `LLM_API_KEY` и (опционально) variables `REVIEW_PROFILE`,
 `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`.
 
-## Webhook-сервис
+## Webhook-сервис (`serve`)
+
+Третий способ работы (помимо GitHub Actions и разового `review`): поднять
+**свой постоянно работающий сервис**, который сам принимает события от GitHub и
+ревьюит PR. Полезно, когда нужен единый бот на много репозиториев, свой сервер
+или кастомная логика — вместо запуска ревью внутри CI.
+
+> Для «просто авто-ревью на каждый PR» это не нужно — проще
+> [GitHub Actions](#github-actions-авто-ревью-на-каждый-pr): ничего не надо
+> держать запущенным. `serve` — для тех, кому нужен собственный сервис.
+
+### Как запустить
 
 ```bash
-cp .env.example .env        # впиши ключи
-pr-reviewer serve           # http://localhost:8000
+pr-reviewer serve                 # слушает http://localhost:8000
+pr-reviewer serve --port 9000     # другой порт
+pr-reviewer serve --reload        # автоперезагрузка при правках кода (для разработки)
 ```
 
-GitHub не достучится до `localhost` — пробрось туннель и укажи URL в
-**Settings → Webhooks** (Payload = `<url>/webhook`, Content type =
-`application/json`, Secret = `WEBHOOK_SECRET`, событие = **Pull requests**):
+Настройки берутся из `.env` (провайдер, ключ, `WEBHOOK_SECRET`) — заполни его
+через `pr-reviewer setup` или вручную (`cp .env.example .env`).
+
+### Что делает сервис
+
+- `POST /webhook` — принимает события GitHub. На `pull_request`
+  (`opened` / `synchronize` / `reopened`) проверяет подпись
+  `X-Hub-Signature-256`, **сразу отвечает `202`**, а ревью считает в фоне: берёт
+  diff PR, прогоняет через LLM (профиль/оркестратор) и постит review с вердиктом
+  и inline-комментариями. Событие `ping` → `pong`.
+- `GET /health` — проверка живости: `{"status": "ok"}`.
+
+### Подключение к GitHub
+
+GitHub **не достучится до `localhost`** — пробрось туннель наружу и укажи
+публичный URL в репозитории: **Settings → Webhooks → Add webhook**
+(Payload URL = `<url>/webhook`, Content type = `application/json`,
+Secret = то же, что `WEBHOOK_SECRET` в `.env`, событие = **Pull requests**).
 
 ```bash
+pr-reviewer serve
+# в отдельном терминале — туннель на localhost:8000:
 npx smee-client --url https://smee.io/<channel> --target http://localhost:8000/webhook
-# или: ngrok http 8000
+# или: ngrok http 8000   (URL из вывода ngrok → в Payload URL вебхука)
 ```
+
+После этого сервис ревьюит каждый новый/обновлённый PR, пока запущен.
 
 ## Демо без GitHub
 
