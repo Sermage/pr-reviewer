@@ -307,3 +307,10 @@ def test_uninstall_workflow_needs_repo(monkeypatch):
     monkeypatch.setattr(cli, "gh_available", lambda: True)
     monkeypatch.setattr(cli, "gh_default_repo", lambda: "")
     assert cli.cmd_uninstall_workflow(argparse.Namespace(repo="", yes=True)) == 1
+
+
+def test_remote_workflow_exists_true_and_false(monkeypatch):
+    monkeypatch.setattr(cli, "_gh", lambda *a, **k: _cp(stdout="sha123\n"))
+    assert cli._remote_workflow_exists("o/r") is True
+    monkeypatch.setattr(cli, "_gh", lambda *a, **k: _cp(returncode=1))
+    assert cli._remote_workflow_exists("o/r") is False

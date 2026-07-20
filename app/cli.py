@@ -46,7 +46,6 @@ from .providers import (
 PKG_ROOT = paths.package_root()      # dir containing app/ — used as serve's cwd
 ENV_PATH = paths.env_path()          # repo/.env in a checkout, else ~/.pr-reviewer/.env
 ENV_EXAMPLE = paths.env_example_path()
-WORKFLOW = paths.workflow_path()
 
 # How the user actually invokes us. In a checkout there is no global command —
 # only the ./pr-reviewer launcher — so hints must carry the ./ prefix. After
@@ -240,6 +239,12 @@ def _install_workflow(repo: str) -> subprocess.CompletedProcess:
     if existing.returncode == 0 and existing.stdout.strip():
         args += ["-f", f"sha={existing.stdout.strip()}"]
     return _gh(*args)
+
+
+def _remote_workflow_exists(repo: str) -> bool:
+    """True if the review workflow is committed to `repo`'s default branch."""
+    r = _gh("api", f"repos/{repo}/contents/{WORKFLOW_REL}", "-q", ".sha")
+    return r.returncode == 0 and bool(r.stdout.strip())
 
 
 def _remove_workflow(repo: str) -> subprocess.CompletedProcess:
@@ -438,8 +443,21 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     label = f"{profile} (оркестратор)" if profile == AUTO_PROFILE else profile
     check(f"профиль ревью: {label}", profile in names or profile == AUTO_PROFILE,
           f"неизвестный профиль, доступны: {', '.join(names)}, {AUTO_PROFILE}")
-    check("gh авторизован", gh_account() is not None, "gh auth login")
-    check("workflow ai-review.yml", WORKFLOW.exists(), "восстанови .github/workflows/")
+    account = gh_account()
+    check("gh авторизован", account is not None, "gh auth login")
+
+    # The workflow lives in the *target* repo on GitHub (не локально) — так что
+    # проверяем его наличие там, а не файл в этой установке.
+    repo = gh_default_repo() if account else ""
+    if not account:
+        print(f"   {warn('•')} workflow: пропущено (нужен авторизованный gh)")
+    elif not repo:
+        print(f"   {warn('•')} workflow: запусти из папки репозитория, чтобы проверить")
+    elif _remote_workflow_exists(repo):
+        check(f"workflow авто-ревью в {repo}", True)
+    else:
+        check(f"workflow авто-ревью в {repo}", False,
+              f"{CMD} install-workflow --repo {repo}")
     print()
     return 0
 
