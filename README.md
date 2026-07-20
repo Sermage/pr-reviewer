@@ -72,6 +72,8 @@ pr-reviewer review --repo o/n --pr 1  # ревью и публикация в PR
 pr-reviewer profile                   # профили ревью
 pr-reviewer provider                  # LLM-провайдеры
 pr-reviewer serve                     # webhook-сервис локально
+pr-reviewer update                    # обновить до свежей версии
+pr-reviewer uninstall                 # удалить сервис
 pr-reviewer help                      # все команды
 ```
 
@@ -127,6 +129,28 @@ pr-reviewer profile --remove security
 необходимости). Если для найденного направления профиля нет — использует
 дефолтный и честно пишет в заключении, что точность по этому направлению снижена
 и какой профиль стоит добавить.
+
+## Обновление и удаление
+
+```bash
+pr-reviewer update      # подтянуть свежую версию
+pr-reviewer uninstall   # удалить сервис
+```
+
+`update` в варианте-репозитории делает `git pull` и переустанавливает
+зависимости; при установке через pipx — `pipx upgrade`.
+
+`uninstall` снимает глобальный симлинк и (по подтверждению) удаляет конфиг.
+Полное удаление зависит от способа установки:
+
+```bash
+# репозиторий:
+./uninstall.sh          # удалит .venv и симлинк (спросит про .env)
+rm -rf pr-reviewer      # и саму папку клона
+
+# pipx:
+pipx uninstall ai-pr-reviewer
+```
 
 ## GitHub Actions (авто-ревью на каждый PR)
 

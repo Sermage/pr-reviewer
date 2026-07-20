@@ -114,3 +114,80 @@ def test_profile_show_builtin_and_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
     assert cmd_profile(_profile_args(show="compose")) == 0
     assert cmd_profile(_profile_args(show="nope")) == 1
+
+
+# ── update / uninstall ─────────────────────────────────────────────────
+def test_update_source_pulls_then_reinstalls(tmp_path, monkeypatch):
+    pkg = tmp_path / "repo"
+    (pkg / ".venv" / "bin").mkdir(parents=True)
+    (pkg / ".venv" / "bin" / "pip").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: True)
+    monkeypatch.setattr(cli.paths, "package_root", lambda: pkg)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda c, *a, **k: calls.append(c) or 0)
+    assert cli.cmd_update(argparse.Namespace()) == 0
+    assert calls[0][:3] == ["git", "-C", str(pkg)] and "pull" in calls[0]
+    assert calls[1][0] == str(pkg / ".venv" / "bin" / "pip") and "install" in calls[1]
+
+
+def test_update_source_stops_on_pull_failure(tmp_path, monkeypatch):
+    pkg = tmp_path / "repo"
+    pkg.mkdir()
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: True)
+    monkeypatch.setattr(cli.paths, "package_root", lambda: pkg)
+    monkeypatch.setattr(cli.subprocess, "call", lambda c, *a, **k: 1)
+    assert cli.cmd_update(argparse.Namespace()) == 1  # no reinstall after failed pull
+
+
+def test_update_installed_without_pipx_prints_hint(monkeypatch, capsys):
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: False)
+    monkeypatch.setattr(cli.shutil, "which", lambda n: None)
+    assert cli.cmd_update(argparse.Namespace()) == 0
+    assert "pipx" in capsys.readouterr().out
+
+
+def test_uninstall_source_removes_symlink_and_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pkg = tmp_path / "repo"
+    (pkg / ".venv" / "bin").mkdir(parents=True)
+    binexe = pkg / ".venv" / "bin" / "pr-reviewer"
+    binexe.write_text("#!/bin/sh\n")
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    link = bindir / "pr-reviewer"
+    link.symlink_to(binexe)
+    env = pkg / ".env"
+    env.write_text("LLM_API_KEY=sk\n")
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: True)
+    monkeypatch.setattr(cli.paths, "package_root", lambda: pkg)
+    monkeypatch.setattr(cli, "ENV_PATH", env)
+    assert cli.cmd_uninstall(argparse.Namespace(yes=True)) == 0
+    assert not link.is_symlink()
+    assert not env.exists()
+
+
+def test_uninstall_keeps_foreign_symlink(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    other = tmp_path / "other" / "pr-reviewer"
+    other.parent.mkdir(parents=True)
+    other.write_text("#!/bin/sh\n")
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    link = bindir / "pr-reviewer"
+    link.symlink_to(other)
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: True)
+    monkeypatch.setattr(cli.paths, "package_root", lambda: tmp_path / "repo")
+    monkeypatch.setattr(cli, "ENV_PATH", tmp_path / "repo" / ".env")
+    assert cli.cmd_uninstall(argparse.Namespace(yes=True)) == 0
+    assert link.is_symlink()  # points elsewhere → untouched
+
+
+def test_uninstall_installed_removes_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.local/bin symlink present
+    home = tmp_path / ".pr-reviewer"
+    home.mkdir()
+    (home / ".env").write_text("x")
+    monkeypatch.setattr(cli.paths, "is_source_checkout", lambda: False)
+    monkeypatch.setattr(cli.paths, "home_dir", lambda: home)
+    assert cli.cmd_uninstall(argparse.Namespace(yes=True)) == 0
+    assert not home.exists()
