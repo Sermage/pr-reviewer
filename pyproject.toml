@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-pr-reviewer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AI code review for GitHub pull requests (Android by default, any focus via profiles)."
 requires-python = ">=3.11"
 dependencies = [
@@ -25,6 +25,9 @@ dev = [
 
 [tool.setuptools]
 packages = ["app"]
+
+[tool.setuptools.dynamic]
+version = {attr = "app.__version__"}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

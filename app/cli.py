@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import paths
+from . import __version__, paths
 from .profiles import (
     AUTO_PROFILE,
     DEFAULT_PROFILE,
@@ -408,7 +408,7 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
 # ── doctor ────────────────────────────────────────────────────────────
 def cmd_doctor(_: argparse.Namespace) -> int:
-    print(bold("\n🩺 AI PR Reviewer — проверка\n"))
+    print(bold(f"\n🩺 AI PR Reviewer v{__version__} — проверка\n"))
     mode = "репозиторий" if paths.is_source_checkout() else "установлен (pipx)"
     print(f"   📁 конфиг: {ENV_PATH.parent}  ({mode})\n")
     env_text = ENV_PATH.read_text() if ENV_PATH.exists() else ""
@@ -894,6 +894,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="pr-reviewer",
         description="AI PR Reviewer — AI код-ревью PR (Android по умолчанию, настраивается под любое направление).",
     )
+    parser.add_argument("--version", action="version",
+                        version=f"pr-reviewer {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("setup", help="интерактивная настройка (ключ, профиль, Actions)")
