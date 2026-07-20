@@ -5,6 +5,7 @@ Commands:
     pr-reviewer doctor     check that everything is configured
     pr-reviewer serve      run the webhook service locally
     pr-reviewer install-workflow   commit the auto-review GitHub Actions workflow to a repo
+    pr-reviewer uninstall-workflow remove auto-review from a repo (workflow, secret, variables)
     pr-reviewer update     pull the latest version and reinstall (or pipx upgrade)
     pr-reviewer uninstall  remove the symlink and config (points to .venv/pipx removal)
 
@@ -57,6 +58,10 @@ CMD = "./pr-reviewer" if paths.is_source_checkout() else "pr-reviewer"
 REPO_HTTPS = "https://github.com/Sermage/pr-reviewer"
 REPO_URL = f"git+{REPO_HTTPS}"
 WORKFLOW_REL = ".github/workflows/ai-review.yml"
+
+# What the Actions setup writes to a target repo (and uninstall-workflow removes).
+ACTIONS_SECRET = "LLM_API_KEY"
+ACTIONS_VARS = ("REVIEW_PROFILE", "LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL")
 
 # Self-contained workflow for a *target* repo (e.g. an Android app): that repo
 # has no reviewer code, so the job installs pr-reviewer from git and calls it.
@@ -235,6 +240,22 @@ def _install_workflow(repo: str) -> subprocess.CompletedProcess:
     if existing.returncode == 0 and existing.stdout.strip():
         args += ["-f", f"sha={existing.stdout.strip()}"]
     return _gh(*args)
+
+
+def _remove_workflow(repo: str) -> subprocess.CompletedProcess:
+    """Delete the review workflow from `repo`'s default branch (idempotent)."""
+    branch = _gh("api", f"repos/{repo}", "-q", ".default_branch")
+    if branch.returncode != 0:
+        return branch
+    ref = branch.stdout.strip()
+    existing = _gh("api", f"repos/{repo}/contents/{WORKFLOW_REL}",
+                   "-q", ".sha", "-X", "GET", "-f", f"ref={ref}")
+    if existing.returncode != 0 or not existing.stdout.strip():
+        # Already absent — nothing to delete.
+        return subprocess.CompletedProcess([], 0, stdout="absent", stderr="")
+    return _gh("api", "--method", "DELETE", f"repos/{repo}/contents/{WORKFLOW_REL}",
+               "-f", "message=ci: удалить авто-ревью (AI PR Reviewer)",
+               "-f", f"branch={ref}", "-f", f"sha={existing.stdout.strip()}")
 
 
 # ── setup wizard ──────────────────────────────────────────────────────
@@ -840,6 +861,33 @@ def cmd_install_workflow(args: argparse.Namespace) -> int:
     return 1
 
 
+# ── uninstall-workflow ────────────────────────────────────────────────
+def cmd_uninstall_workflow(args: argparse.Namespace) -> int:
+    print(bold("\n🧹 GitHub Actions — удаление авто-ревью\n"))
+    if not gh_available():
+        print(err("gh не найден — удали workflow, секрет и переменные вручную "
+                  "в настройках репозитория."))
+        return 1
+    repo = args.repo or gh_default_repo()
+    if "/" not in repo:
+        print(err("Не удалось определить репозиторий. Укажи --repo owner/name."))
+        return 1
+    if not getattr(args, "yes", False) and not confirm(
+        f"   Удалить workflow, секрет и переменные ревью из {repo}?", default=False
+    ):
+        print("   отменено")
+        return 0
+
+    print(_step_status(_remove_workflow(repo), f"workflow {WORKFLOW_REL}"))
+    print(_step_status(_gh("secret", "delete", ACTIONS_SECRET, "--repo", repo),
+                       f"секрет {ACTIONS_SECRET}"))
+    for var in ACTIONS_VARS:
+        print(_step_status(_gh("variable", "delete", var, "--repo", repo),
+                           f"variable {var}"))
+    print(ok(f"\n✓ Готово — {repo} очищен от авто-ревью."))
+    return 0
+
+
 # ── entrypoint ────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -882,6 +930,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_wf.add_argument("--repo", default="", help="owner/name (по умолчанию — текущий)")
     p_wf.add_argument("--print", action="store_true", help="только показать YAML, не коммитить")
 
+    p_rmwf = sub.add_parser("uninstall-workflow", help="удалить авто-ревью из репозитория (workflow, секрет, переменные)")
+    p_rmwf.add_argument("--repo", default="", help="owner/name (по умолчанию — текущий)")
+    p_rmwf.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждение")
+
     sub.add_parser("update", help="обновить сервис (git pull + переустановка или pipx upgrade)")
 
     p_uninstall = sub.add_parser("uninstall", help="удалить сервис (симлинк, конфиг; подскажет про .venv/pipx)")
@@ -921,6 +973,9 @@ COMMANDS_HELP = """\
   install-workflow      добавить GitHub Actions workflow авто-ревью в репозиторий
                           --repo owner/name   целевой репозиторий (по умолч. текущий)
                           --print             показать YAML, не коммитить
+  uninstall-workflow    удалить авто-ревью из репозитория (workflow + секрет + переменные)
+                          --repo owner/name   целевой репозиторий (по умолч. текущий)
+                          -y                  без подтверждения
   update                обновить сервис (git pull + переустановка или pipx upgrade)
   uninstall [-y]        удалить сервис: симлинк и конфиг (подскажет про .venv/pipx)
   help                  этот экран
@@ -958,6 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
         "provider": cmd_provider,
         "serve": cmd_serve,
         "install-workflow": cmd_install_workflow,
+        "uninstall-workflow": cmd_uninstall_workflow,
         "update": cmd_update,
         "uninstall": cmd_uninstall,
         "help": cmd_help,
