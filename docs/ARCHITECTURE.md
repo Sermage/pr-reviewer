@@ -26,7 +26,7 @@ Review с вердиктом + inline-комментарии в PR
 ```
 app/
   main.py          # FastAPI: /webhook, /health; фон через BackgroundTasks
-  cli.py           # CLI: setup/doctor/review/profile/provider/serve/install-workflow/update/uninstall/help
+  cli.py           # CLI: setup/doctor/review/profile/provider/serve/(un)install-workflow/update/uninstall/help
   runner.py        # общий конвейер: get_diff → review_diff → post_review
   reviewer.py      # ядро: diff → LLM → verdict + inline-комменты + markdown
   orchestrator.py  # мета-профиль auto: детект направлений → агенты → слияние
@@ -231,6 +231,13 @@ review_profile, post_reviews, review_actions). `POST_REVIEWS=false` гоняет
 **дефолтную ветку** целевого репо — GitHub берёт определение workflow для PR
 именно оттуда. Если файл уже есть, передаётся его blob `sha` (update-in-place).
 Локальный checkout не нужен.
+
+**Удаление** (`cli._remove_workflow`, команда `uninstall-workflow`) —
+симметрично: `DELETE` workflow-файла (идемпотентно: отсутствует → success),
+плюс `gh secret delete`/`gh variable delete` секрета `LLM_API_KEY` и переменных
+`REVIEW_PROFILE`/`LLM_PROVIDER`/`LLM_MODEL`/`LLM_BASE_URL` (константы
+`ACTIONS_SECRET`/`ACTIONS_VARS`). Полный сброс интеграции для чистой
+переустановки.
 
 ## Аутентификация: сейчас и дальше
 

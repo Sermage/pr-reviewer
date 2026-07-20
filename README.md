@@ -170,6 +170,13 @@ pr-reviewer install-workflow --repo owner/name   # закоммитит workflow
 pr-reviewer install-workflow --print             # просто показать YAML
 ```
 
+Убрать авто-ревью из репозитория (workflow + секрет + переменные) — например,
+чтобы переустановить с нуля:
+
+```bash
+pr-reviewer uninstall-workflow --repo owner/name
+```
+
 > ⚠️ Workflow должен лежать в **дефолтной ветке** целевого репозитория — GitHub
 > берёт определение workflow для PR именно оттуда. Провайдер `local` в Actions
 > не работает (нет доступа к твоему `localhost`) — используй облачный.

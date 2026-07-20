@@ -251,3 +251,59 @@ def test_install_workflow_aborts_without_repo(monkeypatch):
 def test_cmd_install_workflow_print_outputs_yaml(monkeypatch, capsys):
     assert cli.cmd_install_workflow(argparse.Namespace(repo="", print=True)) == 0
     assert "pr-reviewer review" in capsys.readouterr().out
+
+
+# ── uninstall-workflow ──────────────────────────────────────────────────
+def test_remove_workflow_deletes_when_present(monkeypatch):
+    calls = []
+
+    def fake_gh(*args, stdin=None):
+        calls.append(args)
+        if ".default_branch" in args:
+            return _cp(stdout="main\n")
+        if "GET" in args:                      # file present → return sha
+            return _cp(stdout="blob99\n")
+        return _cp(stdout="{}")                # DELETE
+
+    monkeypatch.setattr(cli, "_gh", fake_gh)
+    assert cli._remove_workflow("o/r").returncode == 0
+    delete = next(c for c in calls if "DELETE" in c)
+    assert "sha=blob99" in delete and "branch=main" in delete
+
+
+def test_remove_workflow_absent_is_ok(monkeypatch):
+    def fake_gh(*args, stdin=None):
+        if ".default_branch" in args:
+            return _cp(stdout="main\n")
+        if "GET" in args:                      # file not found
+            return _cp(returncode=1)
+        raise AssertionError("должно остановиться до DELETE")
+
+    monkeypatch.setattr(cli, "_gh", fake_gh)
+    assert cli._remove_workflow("o/r").returncode == 0   # idempotent
+
+
+def test_uninstall_workflow_removes_secret_and_vars(monkeypatch):
+    calls = []
+
+    def fake_gh(*args, stdin=None):
+        calls.append(args)
+        if ".default_branch" in args:
+            return _cp(stdout="main\n")
+        if "GET" in args:
+            return _cp(returncode=1)           # no workflow file
+        return _cp(stdout="{}")
+
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "_gh", fake_gh)
+    rc = cli.cmd_uninstall_workflow(argparse.Namespace(repo="o/r", yes=True))
+    assert rc == 0
+    assert ("secret", "delete", "LLM_API_KEY", "--repo", "o/r") in calls
+    for var in ("REVIEW_PROFILE", "LLM_PROVIDER", "LLM_MODEL", "LLM_BASE_URL"):
+        assert ("variable", "delete", var, "--repo", "o/r") in calls
+
+
+def test_uninstall_workflow_needs_repo(monkeypatch):
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "gh_default_repo", lambda: "")
+    assert cli.cmd_uninstall_workflow(argparse.Namespace(repo="", yes=True)) == 1
