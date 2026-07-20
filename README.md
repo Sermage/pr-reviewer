@@ -154,9 +154,19 @@ pr-reviewer profile --add security --from security.md
 pr-reviewer profile --add gradle --focus "Проверяй version catalogs, ..."
 # интерактивно (ввод фокуса, Ctrl-D в конце)
 pr-reviewer profile --add myteam
+# посмотреть текущий focus профиля
+pr-reviewer profile --show security
+# отредактировать свой профиль ($EDITOR; или --focus/--from без интерактива)
+pr-reviewer profile --edit security
+pr-reviewer profile --edit security --from new-focus.md
 # удалить свой профиль
 pr-reviewer profile --remove security
 ```
+
+`--show` работает и для встроенных (посмотреть, что проверяет `android`/`compose`/
+`kmp`). `--edit` — только для своих профилей: встроенные меняются правкой
+`app/profiles.py`. Повторный `--add` существующего профиля предупреждает о
+перезаписи (в терминале спросит подтверждение).
 
 Профиль сразу доступен в `pr-reviewer profile`, флаге `--profile` и как
 `REVIEW_PROFILE`. Свой профиль с именем встроенного его переопределяет; сами

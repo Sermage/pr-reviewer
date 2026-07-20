@@ -41,10 +41,11 @@ def test_compose_profile_registered():
     assert "recomposition" in get_profile("compose").system_prompt.lower()
 
 
-def _profile_args(name="", repo="", sync=False, add="", remove="", focus="", from_file=""):
+def _profile_args(name="", repo="", sync=False, add="", edit="", show="",
+                  remove="", focus="", from_file=""):
     return argparse.Namespace(
-        name=name, repo=repo, sync=sync, add=add, remove=remove,
-        focus=focus, from_file=from_file,
+        name=name, repo=repo, sync=sync, add=add, edit=edit, show=show,
+        remove=remove, focus=focus, from_file=from_file,
     )
 
 
@@ -87,3 +88,29 @@ def test_profile_add_and_remove(tmp_path, monkeypatch):
 def test_cannot_override_builtin(tmp_path, monkeypatch):
     monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
     assert cmd_profile(_profile_args(add="android", focus="x")) == 1
+
+
+def test_profile_edit_replaces_focus(tmp_path, monkeypatch):
+    pdir = tmp_path / "profiles.d"
+    monkeypatch.setattr(profiles, "PROFILES_DIR", pdir)
+    assert cmd_profile(_profile_args(add="security", focus="Старый focus.")) == 0
+
+    assert cmd_profile(_profile_args(edit="security", focus="Новый focus.")) == 0
+    assert (pdir / "security.md").read_text().strip() == "Новый focus."
+    assert "Новый" in get_profile("security").system_prompt
+
+
+def test_profile_edit_missing_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
+    assert cmd_profile(_profile_args(edit="ghost")) == 1
+
+
+def test_profile_edit_rejects_builtin(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
+    assert cmd_profile(_profile_args(edit="android", focus="x")) == 1
+
+
+def test_profile_show_builtin_and_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, "PROFILES_DIR", tmp_path / "profiles.d")
+    assert cmd_profile(_profile_args(show="compose")) == 0
+    assert cmd_profile(_profile_args(show="nope")) == 1

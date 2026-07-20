@@ -354,15 +354,83 @@ def _add_profile(args: argparse.Namespace) -> int:
     if is_builtin(name):
         print(err(f"'{name}' — встроенный профиль, его нельзя переопределить."))
         return 1
+    path = custom_path(name)
+    if path.exists():
+        if sys.stdin.isatty() and not confirm(
+            f"   Профиль '{name}' уже есть. Перезаписать?", default=False
+        ):
+            print("   отменено — для правки: "
+                  f"{bold(f'pr-reviewer profile --edit {name}')}")
+            return 0
+        print(warn(f"   ⚠ перезаписываю существующий '{name}'"))
     focus = _read_focus(args)
     if not focus:
         print(err("Пустой focus — профиль не создан. Задай --focus или --from файл."))
         return 1
-    path = custom_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(focus + "\n")
     print(f"{ok('✓')} профиль {bold(name)} создан → {path}")
     print(f"   активировать: {bold(f'pr-reviewer profile {name}')}")
+    return 0
+
+
+def _edit_profile(args: argparse.Namespace) -> int:
+    name = args.edit.lower()
+    if is_builtin(name):
+        print(err(f"'{name}' — встроенный профиль, "
+                  "правится только в app/profiles.py."))
+        return 1
+    path = custom_path(name)
+
+    # Non-interactive replacement: --focus / --from work like for --add.
+    focus = ""
+    if args.focus:
+        focus = args.focus.strip()
+    elif args.from_file:
+        focus = Path(args.from_file).read_text().strip()
+    if focus:
+        existed = path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(focus + "\n")
+        print(f"{ok('✓')} профиль {bold(name)} "
+              f"{'обновлён' if existed else 'создан'} → {path}")
+        return 0
+
+    if not path.exists():
+        print(err(f"Свой профиль '{name}' не найден. Создай: "
+                  f"pr-reviewer profile --add {name}"))
+        return 1
+
+    # Interactive: open in $EDITOR when we have one and a real terminal.
+    editor = os.getenv("EDITOR") or os.getenv("VISUAL")
+    if editor and sys.stdin.isatty():
+        subprocess.call([*editor.split(), str(path)])
+        print(f"{ok('✓')} профиль {bold(name)} сохранён → {path}")
+        return 0
+
+    # No editor: show the current focus, read a replacement from stdin.
+    print(f"   Текущий focus профиля {bold(name)}:\n")
+    print(path.read_text().strip())
+    print("\n   Введи новый focus (Ctrl-D — сохранить, пусто — отмена):")
+    new_focus = sys.stdin.read().strip() if sys.stdin.isatty() else ""
+    if not new_focus:
+        print("   без изменений")
+        return 0
+    path.write_text(new_focus + "\n")
+    print(f"{ok('✓')} профиль {bold(name)} обновлён → {path}")
+    return 0
+
+
+def _show_profile(args: argparse.Namespace) -> int:
+    name = args.show.lower()
+    profiles = load_profiles()
+    if name not in profiles:
+        print(err(f"Неизвестный профиль '{name}'. Доступны: {', '.join(profiles)}"))
+        return 1
+    kind = "встроенный" if is_builtin(name) else f"свой → {custom_path(name)}"
+    print(bold(f"\nПрофиль {name} ({kind}):\n"))
+    print(profiles[name].focus.strip())
+    print()
     return 0
 
 
@@ -383,6 +451,10 @@ def _remove_profile(args: argparse.Namespace) -> int:
 def cmd_profile(args: argparse.Namespace) -> int:
     if args.add:
         return _add_profile(args)
+    if args.edit:
+        return _edit_profile(args)
+    if args.show:
+        return _show_profile(args)
     if args.remove:
         return _remove_profile(args)
 
@@ -453,9 +525,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile = sub.add_parser("profile", help="показать/переключить/добавить профиль ревью")
     p_profile.add_argument("name", nargs="?", default="", help="имя профиля для переключения")
     p_profile.add_argument("--add", default="", metavar="NAME", help="создать свой профиль")
+    p_profile.add_argument("--edit", default="", metavar="NAME", help="редактировать свой профиль ($EDITOR / --focus / --from)")
+    p_profile.add_argument("--show", default="", metavar="NAME", help="показать focus профиля")
     p_profile.add_argument("--remove", default="", metavar="NAME", help="удалить свой профиль")
-    p_profile.add_argument("--focus", default="", help="текст focus для --add (иначе --from или ввод)")
-    p_profile.add_argument("--from", dest="from_file", default="", help="файл с текстом focus для --add")
+    p_profile.add_argument("--focus", default="", help="текст focus для --add/--edit (иначе --from или ввод)")
+    p_profile.add_argument("--from", dest="from_file", default="", help="файл с текстом focus для --add/--edit")
     p_profile.add_argument("--repo", default="", help="owner/name для синхронизации repo variable")
     p_profile.add_argument("--sync", action="store_true", help="без вопроса обновить repo variable")
 
@@ -483,6 +557,8 @@ COMMANDS_HELP = """\
                           --sync                обновить и repo variable (для Actions)
                           --add NAME --from f   создать свой профиль из файла
                           --add NAME --focus "" создать свой профиль из текста
+                          --show NAME           показать focus профиля
+                          --edit NAME           править свой профиль ($EDITOR / --focus / --from)
                           --remove NAME         удалить свой профиль
   serve [--port --reload]   запустить webhook-сервис локально
   help                  этот экран
