@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from .profiles import (
+    AUTO_PROFILE,
     DEFAULT_PROFILE,
     available_profiles,
     custom_path,
@@ -216,10 +217,15 @@ def cmd_setup(_: argparse.Namespace) -> int:
 
     # 4. review profile
     print(bold("\n4) Профиль ревью"))
-    names = available_profiles()
+    names = available_profiles() + [AUTO_PROFILE]
     for i, name in enumerate(names, 1):
-        mark = " (по умолчанию)" if name == DEFAULT_PROFILE else ""
-        print(f"   {i}. {name}{mark}")
+        if name == AUTO_PROFILE:
+            note = " — оркестратор: сам определит направление(я) PR"
+        elif name == DEFAULT_PROFILE:
+            note = " (по умолчанию)"
+        else:
+            note = ""
+        print(f"   {i}. {name}{note}")
     raw = ask("   Выбор", str(names.index(DEFAULT_PROFILE) + 1))
     try:
         profile = names[int(raw) - 1]
@@ -307,8 +313,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
               "ключ не нужен; убедись, что сервер запущен")
     profile = env_value(env_text, "REVIEW_PROFILE") or DEFAULT_PROFILE
     names = available_profiles()
-    check(f"профиль ревью: {profile}", profile in names,
-          f"неизвестный профиль, доступны: {', '.join(names)}")
+    label = f"{profile} (оркестратор)" if profile == AUTO_PROFILE else profile
+    check(f"профиль ревью: {label}", profile in names or profile == AUTO_PROFILE,
+          f"неизвестный профиль, доступны: {', '.join(names)}, {AUTO_PROFILE}")
     check("gh авторизован", gh_account() is not None, "gh auth login")
     check("workflow ai-review.yml", WORKFLOW.exists(), "восстанови .github/workflows/")
     print()
@@ -533,19 +540,26 @@ def cmd_profile(args: argparse.Namespace) -> int:
             kind = "встроенный" if is_builtin(name) else "свой"
             status = ok("● активен") if name == current else "○"
             print(f"   {name:<12}{kind:<14} {status}")
+        auto_status = ok("● активен") if current == AUTO_PROFILE else "○"
+        print(f"   {AUTO_PROFILE:<12}{'оркестратор':<14} {auto_status}  "
+              "← сам определит направление(я) PR и запустит нужные профили")
         print(f"\nПереключить: {bold('pr-reviewer profile <имя>')}")
         print(f"Добавить свой: {bold('pr-reviewer profile --add <имя> --from focus.md')}\n")
         return 0
 
     name = args.name.lower()
-    if name not in profiles:
-        print(err(f"Неизвестный профиль '{name}'. Доступны: {', '.join(profiles)}"))
+    if name != AUTO_PROFILE and name not in profiles:
+        print(err(f"Неизвестный профиль '{name}'. "
+                  f"Доступны: {', '.join(profiles)}, {AUTO_PROFILE}"))
         return 1
 
     # Local switch (.env).
     base = ENV_PATH.read_text() if ENV_PATH.exists() else _base_env()
     ENV_PATH.write_text(upsert_env(base, {"REVIEW_PROFILE": name}))
     print(f"{ok('✓')} профиль → {bold(name)} (.env)")
+    if name == AUTO_PROFILE:
+        print("   оркестратор сам определит направление(я) PR по diff и запустит "
+              "подходящие профили (несколько при необходимости)")
 
     # Optionally sync to the GitHub Actions repo variable.
     repo = args.repo or gh_default_repo()
@@ -669,11 +683,14 @@ COMMANDS_HELP = """\
   doctor                проверить, что всё настроено (ключ, профиль, gh, workflow)
   review --pr N         разовое ревью pull request прямо из терминала
                           --repo owner/name   репозиторий (по умолчанию текущий)
-                          --profile android|compose|kmp
+                          --profile android|compose|kmp|auto
                           --dry-run           показать ревью, ничего не постя
                           --approve           разрешить вердикт APPROVE
   profile [имя]         показать или переключить профиль ревью
                           встроенные: android | compose | kmp (+ свои)
+                          auto                  оркестратор: сам определит
+                                                направление(я) PR и запустит
+                                                нужные профили (или несколько)
                           --sync                обновить и repo variable (для Actions)
                           --add NAME --from f   создать свой профиль из файла
                           --add NAME --focus "" создать свой профиль из текста
@@ -693,8 +710,9 @@ COMMANDS_HELP = """\
   pr-reviewer provider claude      # переключить на Claude API
   pr-reviewer provider local       # локальная модель (Ollama и т.п.)
   pr-reviewer profile compose      # переключить на Jetpack Compose
+  pr-reviewer profile auto         # оркестратор — сам выберет профиль(и)
   pr-reviewer profile --add security --from security.md   # свой профиль
-  pr-reviewer review --pr 1 --dry-run
+  pr-reviewer review --pr 1 --profile auto --dry-run
 """
 
 

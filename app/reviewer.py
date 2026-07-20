@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from .diff_index import commentable_lines
-from .profiles import Profile, get_profile
+from .profiles import AUTO_PROFILE, Profile, get_profile
 
 _SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵"}
 
@@ -38,6 +38,8 @@ class ReviewResult:
     body: str           # markdown, ready to post
     verdict: str        # raw verdict from the model
     comments: list[dict] = field(default_factory=list)  # inline review comments
+    summary: str = ""                                   # model's one-liner (for the orchestrator)
+    leftover: list[dict] = field(default_factory=list)  # non-inline issues (for the orchestrator)
 
 
 def _truncate(diff: str) -> str:
@@ -206,7 +208,18 @@ async def review_diff(
     Profile, a profile name, or None (falls back to the default profile).
     `provider` is the wire protocol ("openai" | "anthropic"); `json_mode`
     toggles OpenAI's response_format (off for models that don't support it).
+
+    Special profile ``"auto"`` hands off to the orchestrator, which detects the
+    PR's direction(s) and runs the matching profile(s).
     """
+    name = profile.name if isinstance(profile, Profile) else (profile or "")
+    if isinstance(name, str) and name.lower() == AUTO_PROFILE:
+        from .orchestrator import orchestrate_review  # lazy: avoids import cycle
+        return await orchestrate_review(
+            diff, api_key=api_key, base_url=base_url, model=model,
+            provider=provider, json_mode=json_mode,
+        )
+
     prof = profile if isinstance(profile, Profile) else get_profile(profile)
 
     if not diff.strip():
@@ -225,4 +238,7 @@ async def review_diff(
     event = _VERDICT_TO_EVENT.get(verdict, "COMMENT")
     inline, leftover = _split_issues(parsed.get("issues") or [], diff)
     body = _render_body(parsed, prof.name, leftover, len(inline))
-    return ReviewResult(event=event, body=body, verdict=verdict, comments=inline)
+    return ReviewResult(
+        event=event, body=body, verdict=verdict, comments=inline,
+        summary=parsed.get("summary", "").strip(), leftover=leftover,
+    )

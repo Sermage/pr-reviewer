@@ -91,6 +91,10 @@ PROFILES: dict[str, Profile] = {
 
 DEFAULT_PROFILE = "android"
 
+# Meta-profile: let the orchestrator detect the PR's direction(s) and run the
+# matching profile(s) automatically (see app/orchestrator.py). Not a real focus.
+AUTO_PROFILE = "auto"
+
 
 def load_profiles() -> dict[str, Profile]:
     """Built-in profiles plus any custom ones from ``profiles.d/*.md``.

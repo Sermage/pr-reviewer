@@ -17,24 +17,36 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.providers import resolve as resolve_llm  # noqa: E402
 from app.reviewer import review_diff  # noqa: E402
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Local Android PR Reviewer demo")
     parser.add_argument("diff", help="path to a .diff file")
-    parser.add_argument("--profile", default=os.getenv("REVIEW_PROFILE", "android"))
+    parser.add_argument("--profile", default=os.getenv("REVIEW_PROFILE", "android"),
+                        help="android|compose|kmp|auto|<свой>")
     args = parser.parse_args()
 
+    llm = resolve_llm(
+        provider=os.getenv("LLM_PROVIDER"),
+        api_key=os.getenv("LLM_API_KEY", ""),
+        base_url=os.getenv("LLM_BASE_URL", ""),
+        model=os.getenv("LLM_MODEL", ""),
+        json_mode=os.getenv("LLM_JSON_MODE"),
+    )
     diff = Path(args.diff).read_text()
     result = await review_diff(
         diff,
-        api_key=os.getenv("LLM_API_KEY", ""),
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        api_key=llm.api_key,
+        base_url=llm.base_url,
+        model=llm.model,
+        provider=llm.kind,
+        json_mode=llm.json_mode,
         profile=args.profile,
     )
-    print(f"\n=== VERDICT: {result.event} (profile: {args.profile}) ===\n")
+    print(f"\n=== VERDICT: {result.event} "
+          f"(profile: {args.profile}, provider: {llm.provider}/{llm.model}) ===\n")
     print(result.body)
 
 
