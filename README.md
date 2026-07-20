@@ -36,13 +36,23 @@ pr-reviewer setup
 3. **Профиль ревью** — выбор `android` / `kmp` (список берётся из `app/profiles.py`).
 4. **GitHub Actions** — если `gh` авторизован, сам предлагает настроить авто-ревью:
    ставит секрет `DEEPSEEK_API_KEY`, variable `REVIEW_PROFILE`, проверяет workflow.
+   А если `gh` установлен, но не авторизован — визард предложит `gh auth login`
+   прямо в процессе.
 
 Другие команды:
 
 ```bash
-pr-reviewer doctor    # проверить, что всё настроено (ключ, профиль, gh, workflow)
-pr-reviewer serve     # запустить webhook-сервис локально
+pr-reviewer help                      # список команд с описанием
+pr-reviewer doctor                    # проверить настройку (ключ, профиль, gh, workflow)
+pr-reviewer review --pr 1 --dry-run   # разовое ревью PR из терминала (без постинга)
+pr-reviewer review --repo o/n --pr 1  # ревью и публикация в PR
+pr-reviewer serve                     # запустить webhook-сервис локально
 ```
+
+`review` берёт токен из `GITHUB_TOKEN` или из `gh auth token`, ключ и профиль — из
+`.env`. Флаги: `--profile android|kmp`, `--dry-run` (показать, не постить),
+`--approve` (разрешить вердикт APPROVE — по умолчанию даунгрейдится до COMMENT,
+чтобы не упереться в запрет аппрувить свой же PR).
 
 ## Структура
 

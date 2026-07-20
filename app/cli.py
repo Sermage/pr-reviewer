@@ -13,7 +13,9 @@ the process list.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import getpass
+import os
 import shutil
 import subprocess
 import sys
@@ -147,7 +149,14 @@ def cmd_setup(_: argparse.Namespace) -> int:
     if account:
         print(f"   {ok('✓')} gh авторизован как {account}")
     elif gh_available():
-        print(f"   {warn('!')} gh установлен, но не авторизован — выполни: gh auth login")
+        print(f"   {warn('!')} gh установлен, но не авторизован")
+        if confirm("   Авторизоваться сейчас (gh auth login)?", default=True):
+            subprocess.call(["gh", "auth", "login"])
+            account = gh_account()
+            if account:
+                print(f"   {ok('✓')} gh авторизован как {account}")
+            else:
+                print(f"   {warn('!')} не удалось — шаг про Actions пропустим")
     else:
         print(f"   {warn('!')} gh не найден — шаг про Actions будет пропущен")
 
@@ -243,6 +252,78 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     return 0
 
 
+# ── review (one-off from the terminal) ────────────────────────────────
+def _gh_token() -> str:
+    if not gh_available():
+        return ""
+    r = _gh("auth", "token")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _load_env_file() -> None:
+    """Populate os.environ from .env (without overriding real env vars)."""
+    if not ENV_PATH.exists():
+        return
+    text = ENV_PATH.read_text()
+    for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "REVIEW_PROFILE",
+                "GITHUB_TOKEN", "GITHUB_API"):
+        value = env_value(text, key)
+        if value and not os.getenv(key):
+            os.environ[key] = value
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    from .runner import review_pr
+
+    _load_env_file()
+
+    repo = args.repo or gh_default_repo()
+    if "/" not in repo:
+        print(err("Не удалось определить репозиторий. Укажи --repo owner/name."))
+        return 1
+    owner, name = repo.split("/", 1)
+
+    token = os.getenv("GITHUB_TOKEN") or _gh_token()
+    if not token:
+        print(err("Нет токена GitHub. Задай GITHUB_TOKEN или выполни gh auth login."))
+        return 1
+
+    api_key = os.getenv("LLM_API_KEY", "")
+    if not api_key or api_key == "sk-xxx":
+        print(err("Нет ключа DeepSeek. Запусти: pr-reviewer setup"))
+        return 1
+
+    profile = args.profile or os.getenv("REVIEW_PROFILE", DEFAULT_PROFILE)
+    print(bold(f"\n🔍 Ревью {owner}/{name}#{args.pr} (профиль: {profile})"
+               f"{'  [dry-run]' if args.dry_run else ''}\n"))
+
+    try:
+        outcome = asyncio.run(review_pr(
+            owner, name, args.pr,
+            token=token,
+            api_key=api_key,
+            base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
+            model=os.getenv("LLM_MODEL", "deepseek-chat"),
+            profile=profile,
+            api_base=os.getenv("GITHUB_API", "https://api.github.com"),
+            allow_approve=args.approve,
+            post=not args.dry_run,
+        ))
+    except Exception as e:  # noqa: BLE001 — surface the failure to the user
+        print(err(f"Ошибка: {e}"))
+        return 1
+
+    r = outcome.result
+    print(f"   вердикт: {bold(outcome.posted_event)}   inline-комментариев: {len(r.comments)}")
+    if args.dry_run:
+        print(f"\n{r.body}\n")
+        for c in r.comments:
+            print(f"   📍 {c['path']}:{c['line']}  {c['body']}")
+    else:
+        print(ok(f"   ✓ отправлено в https://github.com/{owner}/{name}/pull/{args.pr}"))
+    return 0
+
+
 # ── serve ─────────────────────────────────────────────────────────────
 def cmd_serve(args: argparse.Namespace) -> int:
     cmd = [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(args.port)]
@@ -262,19 +343,61 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("setup", help="интерактивная настройка (ключ, профиль, Actions)")
     sub.add_parser("doctor", help="проверить, что всё настроено")
+
+    p_review = sub.add_parser("review", help="разовое ревью PR из терминала")
+    p_review.add_argument("--repo", default="", help="owner/name (по умолчанию — текущий репозиторий)")
+    p_review.add_argument("--pr", type=int, required=True, help="номер pull request")
+    p_review.add_argument("--profile", default="", help="профиль ревью (android/kmp)")
+    p_review.add_argument("--approve", action="store_true", help="разрешить вердикт APPROVE")
+    p_review.add_argument("--dry-run", action="store_true", help="показать ревью, не постить")
+
     p_serve = sub.add_parser("serve", help="запустить webhook-сервис локально")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.add_argument("--reload", action="store_true", help="автоперезагрузка (dev)")
+
+    sub.add_parser("help", help="показать список команд и их описание")
     return parser
+
+
+COMMANDS_HELP = """\
+🤖 Android PR Reviewer — команды
+
+  setup                 интерактивная настройка: ключ DeepSeek (скрытый ввод),
+                        профиль ревью и, при желании, GitHub Actions
+  doctor                проверить, что всё настроено (ключ, профиль, gh, workflow)
+  review --pr N         разовое ревью pull request прямо из терминала
+                          --repo owner/name   репозиторий (по умолчанию текущий)
+                          --profile android|kmp
+                          --dry-run           показать ревью, ничего не постя
+                          --approve           разрешить вердикт APPROVE
+  serve [--port --reload]   запустить webhook-сервис локально
+  help                  этот экран
+
+Примеры:
+  pr-reviewer setup
+  pr-reviewer review --pr 1 --dry-run
+  pr-reviewer review --repo Sermage/pr-reviewer --pr 1
+"""
+
+
+def cmd_help(_: argparse.Namespace) -> int:
+    print(COMMANDS_HELP)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    handlers = {"setup": cmd_setup, "doctor": cmd_doctor, "serve": cmd_serve}
+    handlers = {
+        "setup": cmd_setup,
+        "doctor": cmd_doctor,
+        "review": cmd_review,
+        "serve": cmd_serve,
+        "help": cmd_help,
+    }
     handler = handlers.get(args.command)
     if handler is None:
-        parser.print_help()
+        print(COMMANDS_HELP)
         return 0
     return handler(args)
 

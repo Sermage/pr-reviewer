@@ -27,8 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.github_client import GitHubClient  # noqa: E402
-from app.reviewer import review_diff  # noqa: E402
+from app.runner import review_pr  # noqa: E402
 
 
 def _pr_number_from_event() -> int | None:
@@ -58,25 +57,22 @@ async def main() -> int:
         print("::error::GITHUB_TOKEN is not set")
         return 1
 
-    client = GitHubClient(token, os.getenv("GITHUB_API", "https://api.github.com"))
-    diff = await client.get_diff(owner, name, number)
-    result = await review_diff(
-        diff,
+    # Actions' token is not permitted to approve PRs — downgrade there.
+    allow_approve = os.getenv("GITHUB_ACTIONS") != "true"
+
+    outcome = await review_pr(
+        owner, name, number,
+        token=token,
         api_key=os.getenv("LLM_API_KEY", ""),
         base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com"),
         model=os.getenv("LLM_MODEL", "deepseek-chat"),
         profile=args.profile,
+        api_base=os.getenv("GITHUB_API", "https://api.github.com"),
+        allow_approve=allow_approve,
     )
-
-    event = result.event
-    # Actions' token cannot approve PRs — downgrade to a plain comment.
-    if event == "APPROVE" and os.getenv("GITHUB_ACTIONS") == "true":
-        event = "COMMENT"
-
-    await client.post_review(owner, name, number, event, result.body, result.comments)
     print(
-        f"Posted {event} review on {owner}/{name}#{number} "
-        f"(verdict={result.verdict}, inline={len(result.comments)})"
+        f"Posted {outcome.posted_event} review on {owner}/{name}#{number} "
+        f"(verdict={outcome.result.verdict}, inline={len(outcome.result.comments)})"
     )
     return 0
 
